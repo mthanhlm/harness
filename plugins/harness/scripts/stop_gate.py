@@ -30,6 +30,7 @@ import sys
 import time
 from pathlib import Path
 
+import contract as contract_mod
 from detect import get_profile, heavy_checks
 from runner import BASELINE_COST_CEILING, project_check_at_head, run_project_check, trim
 from state import emit, gates_disabled, guard, read_event, repo_root, session_state
@@ -43,6 +44,31 @@ COST_ORDER = {"typecheck": 0, "lint": 1, "test": 2, "build": 3}
 
 def _signature(label: str, output: str) -> str:
     return hashlib.sha256(f"{label}\n{output}".encode("utf-8")).hexdigest()[:16]
+
+
+def _out_of_scope(session_id: str, touched: list[str]) -> list[str]:
+    """Files changed that the approved contract did not list.
+
+    Scope creep is the cheapest thing here to detect and among the most
+    expensive to review, because the extra changes are plausible on their own
+    and only look wrong next to what was agreed.
+
+    Matching is by path suffix: the contract names repo-relative paths and the
+    session records absolute ones, and a suffix match is right often enough
+    without a resolution step that could wrongly accuse on a symlinked tree.
+    """
+    agreed = contract_mod.load(session_id)
+    if not agreed or not agreed.approved:
+        return []
+    scoped = agreed.scoped_files
+    if not scoped:
+        return []
+    strays = []
+    for path in touched:
+        posix = Path(path).as_posix()
+        if not any(posix.endswith(entry.lstrip("./")) for entry in scoped):
+            strays.append(posix)
+    return strays
 
 
 def _run_until_failure(profile: dict, root: Path) -> tuple[list, list, list]:
@@ -107,6 +133,30 @@ def main() -> int:
                         " The problem is yours to look at; run /harness:switch off to stop the"
                         " gate nagging while you do."
                     )
+                }
+            )
+            return 0
+
+        # Cheaper than any project check, and a more common defect.
+        strays = _out_of_scope(session_id, touched)
+        if strays and not session.get("scope_reported"):
+            session["scope_reported"] = True
+            session["heavy_ran_at"] = lines_now
+            listed = "\n".join(f"  - {s}" for s in strays)
+            emit(
+                {
+                    "decision": "block",
+                    "reason": "changes outside the agreed scope",
+                    "hookSpecificOutput": {
+                        "hookEventName": "Stop",
+                        "additionalContext": (
+                            "These files were changed but are not in the contract's scope:\n"
+                            f"{listed}\n\n"
+                            "Either revert them, or explain why they were genuinely required"
+                            " and amend the contract's Scope section to include them."
+                            " Do not leave unagreed changes in the diff."
+                        ),
+                    },
                 }
             )
             return 0
