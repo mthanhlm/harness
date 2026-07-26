@@ -77,8 +77,13 @@ def _run(argv: list[str], cwd: Path, timeout: int) -> tuple[bool, str]:
     return proc.returncode == 0, output.strip()
 
 
-def _normalize(output: str, redact: tuple[str, ...] = ()) -> set[str]:
-    """Reduce tool output to a comparable set of diagnostics.
+def _normalize(output: str, redact: tuple[str, ...] = ()) -> dict[str, str]:
+    """Map each diagnostic's comparable form to the text the tool actually printed.
+
+    Comparison needs the volatile parts gone; the message shown to the model
+    needs them intact, because a type error without its line number is not
+    actionable. Keeping both sides of the mapping serves each purpose without
+    compromising the other.
 
     `redact` carries the names the file is known by in this run — absolute path,
     relative path and bare basename — because tools disagree about which they
@@ -86,16 +91,17 @@ def _normalize(output: str, redact: tuple[str, ...] = ()) -> set[str]:
     path that contains it.
     """
     names = sorted({r for r in redact if r}, key=len, reverse=True)
-    lines = set()
+    diagnostics: dict[str, str] = {}
     for raw in output.splitlines():
         line = raw.strip()
         if not line:
             continue
+        key = line
         for name in names:
-            line = line.replace(name, "FILE")
-        line = _NUM_RE.sub("N", line)
-        lines.add(line)
-    return lines
+            key = key.replace(name, "FILE")
+        key = _NUM_RE.sub("N", key)
+        diagnostics.setdefault(key, line)
+    return diagnostics
 
 
 # Rich diagnostics render a source excerpt under each message: a gutter, a
@@ -104,8 +110,9 @@ def _normalize(output: str, redact: tuple[str, ...] = ()) -> set[str]:
 _CONTEXT_RE = re.compile(r"^(\||-->|\^|=|\.\.\.|N\s*\||\d+\s*\|)")
 
 
-def _headlines(diagnostics: set[str]) -> list[str]:
-    return sorted(d for d in diagnostics if not _CONTEXT_RE.match(d))
+def _headlines(diagnostics: dict[str, str], keys: set[str]) -> list[str]:
+    """The printed form of every non-context diagnostic among `keys`."""
+    return [diagnostics[k] for k in sorted(keys) if k in diagnostics and not _CONTEXT_RE.match(k)]
 
 
 def _names_for(root: Path, target: Path) -> tuple[str, ...]:
@@ -138,7 +145,9 @@ def _baseline_content(root: Path, target: Path) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
-def _diagnostics_at_head(check: dict[str, Any], root: Path, target: Path, timeout: int) -> set[str] | None:
+def _diagnostics_at_head(
+    check: dict[str, Any], root: Path, target: Path, timeout: int
+) -> dict[str, str] | None:
     """Re-run the check against the pre-edit version of the file.
 
     The temporary copy is written beside the original so that everything a tool
@@ -181,9 +190,9 @@ def run_file_check(check: dict[str, Any], root: Path, target: Path) -> Result:
     baseline = _diagnostics_at_head(check, root, target, FILE_CHECK_TIMEOUT)
     if baseline is None:
         # New or untracked file: nothing in it predates the edit.
-        return Result(check, False, output, new_diagnostics=_headlines(current))
+        return Result(check, False, output, new_diagnostics=_headlines(current, set(current)))
 
-    new = current - baseline
+    new = set(current) - set(baseline)
     if not new:
         return Result(
             check,
@@ -191,7 +200,7 @@ def run_file_check(check: dict[str, Any], root: Path, target: Path) -> Result:
             output,
             skipped="pre-existing: the same diagnostics are present at HEAD",
         )
-    headlines = _headlines(new)
+    headlines = _headlines(current, new)
     if not headlines:
         # Everything new was source context around a pre-existing problem,
         # which means the edit only shifted line numbers.
