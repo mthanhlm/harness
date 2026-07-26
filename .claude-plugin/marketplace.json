@@ -1,0 +1,20 @@
+{
+  "name": "autonxt-harness",
+  "owner": {
+    "name": "autonxt",
+    "email": "claude1@kaizenics.com"
+  },
+  "description": "Personal code-quality harness for Claude Code.",
+  "metadata": {
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "harness",
+      "source": "harness",
+      "description": "Blocks on facts, advises on taste. Contract before code, fast checks on every edit, heavy verification at end of turn, and a crew of domain specialists assembled per job.",
+      "category": "code-quality",
+      "tags": ["quality", "verification", "review"]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "harness",
+  "displayName": "Harness",
+  "version": "0.1.0",
+  "description": "Blocks on facts, advises on taste. Contract before code, fast checks on every edit, heavy verification at end of turn, and a crew of domain specialists assembled per job.",
+  "author": {
+    "name": "autonxt",
+    "email": "claude1@kaizenics.com"
+  },
+  "license": "MIT",
+  "keywords": ["code-quality", "verification", "hooks", "review", "harness"]
+}
