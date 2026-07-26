@@ -25,6 +25,19 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/stop_gate.py"],
+            "timeout": 600,
+            "statusMessage": "harness: verifying the project still builds and passes"
+          }
+        ]
+      }
     ]
   }
 }

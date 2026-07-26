@@ -213,6 +213,68 @@ def run_project_check(check: dict[str, Any], root: Path, timeout: int = PROJECT_
     return Result(check, ok, output)
 
 
+# A baseline run costs about as much as the failing run did. Paying that to
+# check a two-second type-check is obviously worth it; paying it to re-run a
+# five-minute build is not, and the answer arrives too late to matter.
+BASELINE_COST_CEILING = 120
+
+
+def project_check_at_head(check: dict[str, Any], root: Path, timeout: int) -> bool | None:
+    """Whether this project check also fails on a pristine checkout of HEAD.
+
+    Answers the question the per-file gate answers with `git show`: did this
+    session actually cause the failure? At project scope a single file is not
+    enough, so the comparison needs a whole tree — hence a detached worktree,
+    which builds one without disturbing anything the user has in progress.
+
+    Returns True when HEAD is broken too (so the session is not to blame), False
+    when HEAD is clean, and None when the question could not be answered.
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+
+    if not (root / ".git").exists():
+        return None
+
+    tmp = Path(tempfile.mkdtemp(prefix="harness-head-"))
+    worktree = tmp / "tree"
+    try:
+        created = _sp.run(
+            ["git", "-C", str(root), "worktree", "add", "--detach", "--quiet", str(worktree), "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if created.returncode != 0:
+            return None
+
+        # Dependencies are not tracked in git, so a fresh checkout has none.
+        # Linking them in is what makes a build or test run at all comparable.
+        for vendored in ("node_modules", ".venv", "venv", "vendor"):
+            source = root / vendored
+            if source.is_dir():
+                try:
+                    (worktree / vendored).symlink_to(source, target_is_directory=True)
+                except OSError:
+                    pass
+
+        argv = [a.replace(str(root), str(worktree)) for a in check["argv"]]
+        ok, _ = _run(argv, worktree, timeout)
+        return not ok
+    except (OSError, _sp.SubprocessError):
+        return None
+    finally:
+        _sp.run(
+            ["git", "-C", str(root), "worktree", "remove", "--force", str(worktree)],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        _sp.run(["git", "-C", str(root), "worktree", "prune"], capture_output=True, timeout=30, check=False)
+        _shutil.rmtree(tmp, ignore_errors=True)
+
+
 def trim(text: str, limit: int = 2000) -> str:
     """Keep tool output short enough to be worth reading in a hook response."""
     text = text.strip()

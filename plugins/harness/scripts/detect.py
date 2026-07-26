@@ -324,11 +324,18 @@ def _python_checks(root: Path) -> list[dict[str, Any]]:
 
 
 def _has_pytest(root: Path) -> bool:
+    """Whether this repo runs its tests with pytest.
+
+    A dedicated pytest config settles it. Otherwise a tests directory only
+    counts when something in the repo also declares the dependency, since a
+    `tests/` folder alone says nothing about the runner.
+    """
     if (root / "pytest.ini").is_file():
         return True
-    if not (root / "tests").is_dir():
+    if not any((root / d).is_dir() for d in ("tests", "test")):
         return False
-    for name in ("pyproject.toml", "setup.cfg", "tox.ini"):
+    declarations = ["pyproject.toml", "setup.cfg", "tox.ini", *(p.name for p in root.glob("requirements*.txt"))]
+    for name in declarations:
         path = root / name
         if path.is_file():
             try:
