@@ -14,13 +14,18 @@ then callers of each get different behaviour from the same intent.
 
 ## How to look
 
-If the repository has a `.codegraph/` directory, start there. It follows calls
-rather than matching text, which finds implementations that grep misses because
-they are named differently:
+Start with CodeGraph. It follows calls rather than matching text, which finds
+implementations grep misses because they are named differently — exactly the case
+that causes something to get written twice. Ensure the index exists first; it is
+per repository, so a fresh clone has none:
 
 ```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
 codegraph explore "<the capability, described in words>"
 ```
+
+If the first command reports CodeGraph unavailable, skip the second and rely on
+the searches below.
 
 Then search by the vocabulary the codebase would plausibly use, not the
 vocabulary of the request. Something that "formats a user's display name" might

@@ -31,9 +31,9 @@ The most expensive thing in any diff, because it is not one mistake but a
 permanent tax: two functions that nearly agree will drift, and then callers of
 each get different behaviour from the same intent.
 
-Use the `reuse-auditor` agent against what was added. If the repo has
-`.codegraph/`, it follows calls rather than text and finds duplicates that are
-named differently — which is how they got written twice in the first place.
+Use the `reuse-auditor` agent against what was added — it ensures a CodeGraph
+index exists first, then follows calls rather than text to find duplicates that
+are named differently, which is how they got written twice in the first place.
 
 Prefer extending the existing thing over keeping a near-twin. But do not force
 it: a helper contorted to serve two callers, with three boolean parameters to

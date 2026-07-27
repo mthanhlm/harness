@@ -75,34 +75,29 @@ Set your session to Sonnet and leave it there. If you run on Opus instead, you
 pay Opus rates for the editing too — which is the cost problem this was built to
 fix.
 
-## CodeGraph — optional, but it is what makes the reuse audit good
+## CodeGraph — indexed for you, on first use
 
-Three components — `plan`, `simplify`, and the `reuse-auditor` agent — will use
-CodeGraph when a repo has been indexed. It follows calls
-instead of matching text, which is the difference between finding a helper named
-`toDisplay` when you searched for `formatName` and writing the second copy of it.
+Three components — `plan`, `simplify` and the `reuse-auditor` agent — search with
+CodeGraph. It follows calls instead of matching text, which is the difference
+between finding a helper named `toDisplay` when you searched for `formatName` and
+writing the second copy of it.
 
-Everything works without it. Each of those components checks for a `.codegraph/`
-directory and falls back to Grep and Glob, so an un-indexed repo degrades rather
-than breaks. But the reuse audit is meaningfully weaker on grep alone, and
-duplicated capability is the most expensive kind of bloat.
-
-**Per repo, once:**
+**You do not have to index anything.** The index is per repository, so a global
+CodeGraph install does nothing for a fresh clone — so those components run this
+first, and it builds the index if there isn't one:
 
 ```bash
-cd ~/your/repo
-codegraph init        # builds .codegraph/ — this is per repository, not global
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/codegraph_ready.py"
 ```
 
-A global CodeGraph install is not enough on its own: the index lives in the repo,
-so a fresh clone has none until you run `init` there. Check with:
+It is idempotent: already indexed, it does nothing. It also declines quietly
+rather than surprising you — outside a git repo, or with CodeGraph not installed,
+it says so and the search falls back to Grep and Glob.
 
-```bash
-ls -d .codegraph 2>/dev/null && echo indexed || echo "not indexed — grep fallback"
-```
-
-Indexing is your call, not the harness's — none of the skills will run `init` for
-you. If you don't want it in a given repo, do nothing and the fallback applies.
+Indexing is fast (a few hundred milliseconds on a small repo) and `codegraph init`
+writes a `.codegraph/` directory whose contents are self-ignored. It still leaves
+one untracked entry, so either commit `.codegraph/.gitignore` or add
+`.codegraph/` to the repo's own `.gitignore`.
 
 ## The two ideas it is built on
 

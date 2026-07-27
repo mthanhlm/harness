@@ -46,12 +46,23 @@ Read the request again and work out what the person is trying to achieve, not
 just what they typed. Then go and read the code — you cannot plan against a
 codebase you have not looked at.
 
-If the repo has a `.codegraph/` directory, it follows calls rather than matching
-text and finds things grep misses:
+Before searching, make sure the index exists — it is built per repository, so a
+fresh clone has none even with CodeGraph installed globally:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
+```
+
+It builds the index if it is missing, does nothing if it is already there, and
+says so plainly if CodeGraph is unavailable. Relay its line to the user when it
+had to build one. Then search:
 
 ```bash
 codegraph explore "<the capability in question>"
 ```
+
+If it reported that CodeGraph is unavailable, fall back to Grep and Glob against
+the vocabulary the codebase would plausibly use.
 
 **Ask only when you genuinely cannot resolve something.** Read the code first;
 most ambiguity dissolves once you have. Use `AskUserQuestion` when two readings
