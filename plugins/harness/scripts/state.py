@@ -110,6 +110,33 @@ def emit(payload: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
+def trace(hook: str, session_id: str, outcome: str, **fields: Any) -> None:
+    """Record why a hook decided what it decided.
+
+    A gate that silently does nothing is indistinguishable from a gate that ran
+    and found nothing wrong. Reconstructing the difference from session state
+    afterwards is guesswork, so each decision point says so at the time. Cheap
+    enough to leave on permanently, and the first thing to read when the harness
+    appears not to have fired.
+    """
+    try:
+        import time
+
+        line = {
+            "at": time.strftime("%H:%M:%S"),
+            "hook": hook,
+            "session": (session_id or "?")[:8],
+            "outcome": outcome,
+            **fields,
+        }
+        path = data_dir() / "gate.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(line) + "\n")
+    except Exception:
+        pass  # Diagnostics must never be the reason a hook fails.
+
+
 @contextmanager
 def guard(debug_name: str) -> Iterator[None]:
     """Swallow any unexpected failure so a hook bug can never break a session.

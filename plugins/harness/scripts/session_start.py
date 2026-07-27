@@ -24,6 +24,7 @@ from state import (
     repo_root,
     save_session,
     load_session,
+    trace,
 )
 
 
@@ -74,6 +75,8 @@ def main() -> int:
         session["consecutive_stop_blocks"] = 0
         session["heavy_blocked"] = {}
     save_session(session)
+    trace("SessionStart", event.get("session_id", "?"), "bootstrapped",
+          source=event.get("source"), agent=event.get("agent_type"))
 
     emit(
         {

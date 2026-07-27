@@ -33,7 +33,7 @@ from pathlib import Path
 import contract as contract_mod
 from detect import get_profile, heavy_checks
 from runner import BASELINE_COST_CEILING, project_check_at_head, run_project_check, trim
-from state import emit, gates_disabled, guard, read_event, repo_root, session_state
+from state import emit, gates_disabled, guard, read_event, repo_root, session_state, trace
 
 MAX_CONSECUTIVE_BLOCKS = 3
 
@@ -106,22 +106,33 @@ def _run_until_failure(profile: dict, root: Path) -> tuple[list, list, list]:
 
 
 def main() -> int:
-    if gates_disabled():
-        return 0
-
     event = read_event()
     session_id = event.get("session_id", "unknown")
+
+    if gates_disabled():
+        trace("Stop", session_id, "skipped: gates off")
+        return 0
 
     with session_state(session_id) as session:
         touched = session.get("files_touched") or []
         if not touched:
+            trace("Stop", session_id, "skipped: no files touched this session")
             return 0
 
         # Re-running project checks when nothing changed since the last run just
-        # makes the user wait for an answer they already have.
+        # makes the user wait for an answer they already have — but only when
+        # that run passed. After a block the project is still broken, and the
+        # model frequently answers without editing (it explains, or reviews, or
+        # asks). Skipping then turns a block into a silent pass and lets the turn
+        # end red, which is the one outcome this gate exists to prevent.
         lines_now = int(session.get("lines_changed") or 0)
-        if session.get("heavy_ran_at") == lines_now:
+        if session.get("heavy_ran_at") == lines_now and not session.get("heavy_blocked"):
+            trace("Stop", session_id, "skipped: already passed at this line count",
+                  lines=lines_now)
             return 0
+
+        trace("Stop", session_id, "running project checks",
+              files=len(touched), lines=lines_now)
 
         blocks = int(session.get("consecutive_stop_blocks") or 0)
         if blocks >= MAX_CONSECUTIVE_BLOCKS:
@@ -168,7 +179,13 @@ def main() -> int:
 
         blocking = [r for r in failed if r.check.get("blocking", True)]
         if not blocking:
+            trace("Stop", session_id, "passed",
+                  ok=[r.label for r in passed],
+                  inherited=[r.label for r in inherited])
             session["consecutive_stop_blocks"] = 0
+            # Whatever was broken is fixed; forget it, so a later unchanged turn
+            # can take the cheap skip again instead of re-running the suite.
+            session["heavy_blocked"] = {}
             notes = [f"{r.label} reports issues" for r in failed]
             notes += [f"{r.label} was already failing before this session" for r in inherited]
             if notes:
@@ -179,24 +196,34 @@ def main() -> int:
         output = trim(result.output, 3000)
         signature = _signature(result.label, output)
         reported = session.get("heavy_blocked") or {}
+        seen_before = signature in reported
 
-        if signature in reported:
-            # Already handed this exact failure to the model once. Repeating it
-            # produces the same failed attempt at the same price.
-            session["consecutive_stop_blocks"] = 0
+        # The same failure twice is not a reason to give up on the first repeat.
+        # It is a reason to say so more firmly, and to stop only once the model
+        # has genuinely had its three attempts. Bailing at the first repeat means
+        # a model that answers without fixing gets the turn ended for it, which
+        # is how a broken project reaches the user with the gate reporting clean.
+        attempts = blocks + 1
+        if seen_before and attempts >= MAX_CONSECUTIVE_BLOCKS:
+            trace("Stop", session_id, "giving up after repeats", check=result.label,
+                  attempts=attempts)
+            session["heavy_ran_at"] = lines_now
             emit(
                 {
                     "systemMessage": (
-                        f"harness: {result.label} is still failing with the same output as before."
-                        " Letting the turn end rather than looping on it."
+                        f"harness: {result.label} still failing after {attempts} attempts —"
+                        " letting the turn end. The project is broken; run /harness:switch off"
+                        " if you want to work on it without the gate."
                     )
                 }
             )
             return 0
 
+        trace("Stop", session_id, "BLOCKING", check=result.label,
+              attempt=attempts, repeat=seen_before)
         reported[signature] = result.label
         session["heavy_blocked"] = reported
-        session["consecutive_stop_blocks"] = blocks + 1
+        session["consecutive_stop_blocks"] = attempts
 
         verified = ", ".join(r.label for r in passed) or "none"
         emit(

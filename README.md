@@ -75,6 +75,35 @@ Set your session to Sonnet and leave it there. If you run on Opus instead, you
 pay Opus rates for the editing too — which is the cost problem this was built to
 fix.
 
+## CodeGraph — optional, but it is what makes the reuse audit good
+
+Three components — `plan`, `simplify`, and the `reuse-auditor` agent — will use
+CodeGraph when a repo has been indexed. It follows calls
+instead of matching text, which is the difference between finding a helper named
+`toDisplay` when you searched for `formatName` and writing the second copy of it.
+
+Everything works without it. Each of those components checks for a `.codegraph/`
+directory and falls back to Grep and Glob, so an un-indexed repo degrades rather
+than breaks. But the reuse audit is meaningfully weaker on grep alone, and
+duplicated capability is the most expensive kind of bloat.
+
+**Per repo, once:**
+
+```bash
+cd ~/your/repo
+codegraph init        # builds .codegraph/ — this is per repository, not global
+```
+
+A global CodeGraph install is not enough on its own: the index lives in the repo,
+so a fresh clone has none until you run `init` there. Check with:
+
+```bash
+ls -d .codegraph 2>/dev/null && echo indexed || echo "not indexed — grep fallback"
+```
+
+Indexing is your call, not the harness's — none of the skills will run `init` for
+you. If you don't want it in a given repo, do nothing and the fallback applies.
+
 ## The two ideas it is built on
 
 **Never block on a problem the edit didn't cause.** A repo almost always carries
@@ -144,6 +173,10 @@ machinery, and is worth switching to if early access opens up on this account.
 - **The end-of-turn gate can still block on inherited breakage** when a project
   check takes over two minutes, since the worktree baseline is skipped above that
   cost ceiling. Bounded by the three-block cap.
+- **When a gate seems not to have fired, read `gate.log`** in the plugin data
+  directory (`~/.claude/plugins/data/harness*/gate.log`). Every hook records why
+  it decided what it decided. This is how the skip-after-block bug was found: a
+  gate that silently does nothing looks exactly like a gate that found nothing.
 - **`plugin eval` is gated to early access**, so `evals/ab.py` stands in for it.
 - **Rust and Go support is written but untested** — neither toolchain is
   installed here. TypeScript and Python are verified against real repos.

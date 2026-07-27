@@ -25,7 +25,7 @@ from pathlib import Path
 
 from detect import checks_for_file, get_profile
 from runner import run_file_check, trim
-from state import emit, gates_disabled, guard, read_event, repo_root, session_state
+from state import emit, gates_disabled, guard, read_event, repo_root, session_state, trace
 
 # Tool names whose input carries a file path we should check.
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
@@ -106,6 +106,10 @@ def main() -> int:
         checks_stat = session.setdefault("checks", {"run": 0, "failed": 0})
         checks_stat["run"] = int(checks_stat.get("run", 0)) + len(results)
         checks_stat["failed"] = int(checks_stat.get("failed", 0)) + len(failures)
+
+    trace("PostToolUse", event.get("session_id", "?"),
+          "blocked" if failures else "ok", file=target.name,
+          agent=event.get("agent_type"))
 
     if failures:
         emit({"decision": "block", "reason": _block_reason(failures, target)})
