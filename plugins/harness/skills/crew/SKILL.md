@@ -64,8 +64,11 @@ which is far cheaper now than after the review.
 ## 4. Run them in parallel
 
 Launch the selected roles as subagents **in a single message**, so they run
-concurrently rather than one after another. Give each the same brief: what
-changed, what the contract agreed, and where to look.
+concurrently rather than one after another, and **wait for them — pass
+`run_in_background: false`.** Agents background themselves by default, which
+would leave you idling for notifications instead of collecting findings.
+
+Give each the same brief: what changed, what the plan agreed, and where to look.
 
 ## 5. Refute before reporting
 

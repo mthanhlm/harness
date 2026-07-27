@@ -48,7 +48,9 @@ change produces noise, and noise trains people to skim.
 
 ## 4. Run the reviewers in parallel
 
-Launch them in a **single message** so they run concurrently. Give each the same
+Launch them in a **single message** so they run concurrently, and **wait for them
+— pass `run_in_background: false`.** Agents background themselves by default, and
+there is no review to report without their findings. Give each the same
 brief: the diff range, the contract if one exists, and the focus argument if the
 user gave one.
 

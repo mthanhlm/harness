@@ -35,7 +35,10 @@ yours is the cheaper one:
 | `reviewer-*` | The review at the end. |
 | `refuter` | Kills weak findings before they reach the user. |
 
-Launch independent ones in a **single message** so they run concurrently.
+Launch independent ones in a **single message** so they run concurrently, and
+**wait for them — pass `run_in_background: false`.** Subagents run in the
+background by default, and you cannot draft a plan without their findings. A
+backgrounded agent here leaves you idling for a notification instead of working.
 
 ## Stage 1 — Understand what is actually wanted
 
