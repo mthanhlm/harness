@@ -92,7 +92,7 @@ def main() -> int:
     _ask(
         f"This session has now changed {len(projected)} files and about {lines} lines,"
         " which is past the point where the harness expects an agreed contract."
-        " Allow to continue without one, or deny and ask for /harness:contract first."
+        " Allow to continue without one, or deny and ask for /harness:plan first."
         " You will not be asked again this session."
     )
     return 0

@@ -2,7 +2,6 @@
 name: review
 description: Review the current changes with the specialists the change actually needs, refuting each finding before reporting it. Use after implementing something and before treating it as done, or when asked to review a diff, a branch or recent work.
 argument-hint: "[optional focus, e.g. 'security' or a file path]"
-model: opus
 effort: xhigh
 allowed-tools: Bash, Read, Grep, Glob, Task
 ---

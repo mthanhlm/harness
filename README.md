@@ -2,10 +2,10 @@
 
 A Claude Code plugin that blocks on facts and advises on taste.
 
-It intervenes at three points: before code is written (an agreed contract), while
-it is being written (fast checks on every edit), and when the turn ends (project
-verification). Judgement — design, bloat, tests, docs — comes back as advice from
-a crew of specialists rather than as a gate.
+One command — `/harness:plan` — takes a request from a vague sentence to reviewed,
+working code, stopping once for your approval. Underneath, it blocks on facts
+(syntax, types, tests) and advises on taste (design, bloat, docs), with every
+judgement call delegated to a specialist running on a stronger model.
 
 ## Install
 
@@ -25,23 +25,55 @@ claude --plugin-dir ~/lam/harness/plugins/harness
 | When | What happens |
 |---|---|
 | Session start | Detects how this repo is checked and says so, once |
-| Prompt submitted | Nudges toward a contract when the request looks like implementation work |
-| Before an edit | Past 3 files or 100 lines with no agreed contract, asks — **once per session** |
+| Prompt submitted | Nudges toward `/harness:plan` when the request looks like implementation work |
+| Before an edit | Past 3 files or 100 lines with no agreed plan, asks — **once per session** |
 | After an edit | Format, lint, syntax and types on the touched file (~0.1–0.2s measured) |
-| Turn ends | Full type-check, tests, build, and a scope check against the contract |
+| Turn ends | Full type-check, tests, build, and a scope check against the plan |
 | Session ends | Records real token cost to the ledger |
 
 ## What you invoke
 
+There is one entry point. Everything else the model loads for itself.
+
 | Command | Does |
 |---|---|
-| `/harness:contract` | Agree scope, reuse, verdict and verification before coding |
-| `/harness:crew` | Assemble the specialists a job needs, across every domain it touches |
-| `/harness:review` | Review the diff with those specialists, refuting each finding first |
-| `/harness:simplify` | Remove what isn't earning its place; fix comments and stale docs |
-| `/harness:verify-tests` | Break the code on purpose and check the tests notice |
+| `/harness:plan` | **Start here.** Understands the request, checks what exists, judges whether the code is worth building on, gets your approval — then builds and reviews it |
+| `/harness:review` | Standalone review, for code you didn't just write (a PR, inherited code) |
 | `/harness:report` | What recent sessions cost, and how often a gate caught something |
 | `/harness:switch off` | Kill switch |
+
+Hidden but model-invocable: `implement`, `crew`, `simplify`, `verify-tests`, and
+the six `lens-*` domain skills. Ask for them in plain language ("check whether
+these tests are real") and the model loads the right one.
+
+## Run your sessions on Sonnet
+
+This is the one setting that matters, and it is counter-intuitive.
+
+A skill's `model:` frontmatter **only takes effect when you type the slash
+command yourself.** When the model loads a skill mid-turn, the override is
+nominal — the work reverts to the session's model. Measured: a `model: haiku`
+skill driving five Bash calls from an Opus session billed Haiku 17 output tokens
+and Opus 633.
+
+Subagents are different: they run on their own declared model regardless of the
+parent. Measured: a Sonnet session spawning the Opus `architect` billed both,
+$0.075 and $0.146, in one turn.
+
+So the split is built the only way that actually works — **cheap main thread,
+expensive agents.** Orchestration and editing (high volume, low judgement) run on
+your session model. Every judgement call is delegated to an agent pinned to Opus:
+
+| Runs on Opus, always | When |
+|---|---|
+| `architect` | Patch / refactor-first / rewrite / don't-build verdict |
+| `reuse-auditor` | Does this already exist? |
+| `reviewer-*` (6) | The review |
+| `refuter` | Kills weak findings before you see them |
+
+Set your session to Sonnet and leave it there. If you run on Opus instead, you
+pay Opus rates for the editing too — which is the cost problem this was built to
+fix.
 
 ## The two ideas it is built on
 
@@ -105,8 +137,10 @@ machinery, and is worth switching to if early access opens up on this account.
 
 ## Known limits
 
-- **Contract approval is model-recorded.** The gate raises the cost of skipping
-  the contract; it cannot make skipping impossible.
+- **Plan approval is model-recorded.** The gate raises the cost of skipping the
+  plan; it cannot make skipping impossible.
+- **Headless runs can't approve.** The approval step needs an interactive
+  session; in `-p` mode there is nobody to answer `AskUserQuestion`.
 - **The end-of-turn gate can still block on inherited breakage** when a project
   check takes over two minutes, since the worktree baseline is skipped above that
   cost ceiling. Bounded by the three-block cap.

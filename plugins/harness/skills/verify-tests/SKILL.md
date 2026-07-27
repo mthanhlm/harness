@@ -2,9 +2,9 @@
 name: verify-tests
 description: Prove whether the tests would actually catch a regression, by breaking the implementation on purpose and checking they go red. Use when tests pass on the first run, before trusting a suite you did not write, or when asked whether the tests are any good.
 argument-hint: "[file or module to check]"
-model: opus
 effort: xhigh
 allowed-tools: Bash, Read, Grep, Glob, Edit, Task
+user-invocable: false
 ---
 
 # Are these tests real?

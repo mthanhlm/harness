@@ -153,7 +153,7 @@ def main() -> int:
                             "These files were changed but are not in the contract's scope:\n"
                             f"{listed}\n\n"
                             "Either revert them, or explain why they were genuinely required"
-                            " and amend the contract's Scope section to include them."
+                            " and amend the plan's Scope section to include them."
                             " Do not leave unagreed changes in the diff."
                         ),
                     },

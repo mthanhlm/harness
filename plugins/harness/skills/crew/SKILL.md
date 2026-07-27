@@ -2,9 +2,9 @@
 name: crew
 description: Assemble the set of specialists a job actually needs, across every domain it touches, and run them. Use before designing non-trivial work and after implementing it — anything spanning more than one area, such as a feature that touches a schema, an endpoint and a component at once.
 argument-hint: "[before|after] [what the job is]"
-model: opus
 effort: xhigh
 allowed-tools: Bash, Read, Grep, Glob, Task
+user-invocable: false
 ---
 
 # Assemble the crew

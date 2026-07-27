@@ -2,9 +2,9 @@
 name: simplify
 description: Remove code that is not earning its place — duplicated capability, speculative abstraction, unused options, dead paths, and comments that restate or contradict the code. Use after something works and before calling it done, or when a diff came out larger than the task warranted.
 argument-hint: "[optional path to focus on]"
-model: opus
 effort: xhigh
 allowed-tools: Bash, Read, Grep, Glob, Edit, Task
+user-invocable: false
 ---
 
 # Simplify what was just built

@@ -48,7 +48,7 @@ _SMALL_RE = re.compile(
 )
 
 NUDGE = (
-    "This looks like implementation work. Before editing, use the `contract` skill"
+    "This looks like implementation work. Before editing, use the `plan` skill"
     " to agree scope, check what already exists, and give a"
     " patch/refactor-first/rewrite verdict — then wait for approval."
     " If the change is genuinely one or two lines, skip it and just do the work."
