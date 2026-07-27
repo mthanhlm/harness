@@ -118,9 +118,15 @@ def read_transcript(path: str) -> dict[str, Any]:
 
 
 def record(session: dict[str, Any], transcript_path: str | None) -> dict[str, Any]:
-    """Append one session summary to today's ledger file."""
+    """Append one session summary to the ledger."""
+    import contract as contract_mod
+
     usage = read_transcript(transcript_path) if transcript_path else {}
     checks = session.get("checks") or {}
+
+    # The contract lives in its own file rather than in session state, so read
+    # it here — otherwise the report would claim every session was unplanned.
+    agreed = contract_mod.load(session.get("session_id", "unknown"))
     entry = {
         "session_id": session.get("session_id"),
         "repo": session.get("repo_root"),
@@ -129,8 +135,8 @@ def record(session: dict[str, Any], transcript_path: str | None) -> dict[str, An
         "checks_run": checks.get("run", 0),
         "checks_failed": checks.get("failed", 0),
         "stop_blocks": session.get("consecutive_stop_blocks") or 0,
-        "contract": bool(session.get("contract_verdict")),
-        "verdict": session.get("contract_verdict"),
+        "contract": bool(agreed and agreed.approved),
+        "verdict": agreed.verdict if agreed else None,
         "usage": usage,
     }
     path = ledger_dir() / "sessions.jsonl"
