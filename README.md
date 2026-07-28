@@ -109,10 +109,8 @@ It is idempotent: already indexed, it does nothing. It also declines quietly
 rather than surprising you — outside a git repo, or with CodeGraph not installed,
 it says so and the search falls back to Grep and Glob.
 
-Indexing is fast (a few hundred milliseconds on a small repo) and `codegraph init`
-writes a `.codegraph/` directory whose contents are self-ignored. It still leaves
-one untracked entry, so either commit `.codegraph/.gitignore` or add
-`.codegraph/` to the repo's own `.gitignore`.
+Indexing is fast — a few hundred milliseconds on a small repo — and the
+`.codegraph/` directory it writes is excluded for you (see below).
 
 ## A cloned repository does not get to run its code
 
@@ -132,6 +130,45 @@ This is not the harness blocking by default. Your edit is never blocked; the
 degraded state is simply fewer checks, which is what already happens in a repo
 with no tooling. Session start says which ones are withheld, every session, so
 running less than you think is never silent.
+
+## Its own artifacts stay out of your product
+
+`.codegraph/` and `.harness/` belong to the tooling, not to what you ship, so
+session start adds them to `.git/info/exclude` — local to your clone, untracked,
+invisible in every diff.
+
+Deliberately **not** `.gitignore`: that file is tracked, so a hook editing it
+would put a change in your next commit that you did not write, which is the
+pollution being avoided. The cost is that it is per clone, so a teammate gets
+their own. That is the right trade for a tool's scratch directories and the wrong
+one for anything the project genuinely needs ignored — which is why it only ever
+writes those two entries.
+
+## It remembers what this project decided
+
+`.harness/roadmap.md`, in your repo, excluded locally. `/harness:plan` reads it
+before planning and appends to it after — **decisions and deferred work only**,
+capped, newest first.
+
+Without it every session starts from nothing: the same ground gets re-covered,
+and a real problem found and reported in one session is gone by the next. It is a
+file rather than a feature on purpose, and you can edit or delete it freely.
+
+What it is not is a session log. A narrative of what happened rots into a wall
+nobody reads, and then it is worth nothing to the session that needed it. The
+test for an entry is whether it would change what someone does next.
+
+## Something argues against the plan before you approve it
+
+Past about three files, `plan-challenger` reads the drafted plan — not the code —
+and argues for less: what to cut, what the smaller version would be, and whether
+the failing test named in the plan would actually fail on a broken
+implementation.
+
+It exists because of an asymmetry. The review phase has six independent finders
+and a refuter. The plan phase had one voice, at the moment a wrong decision is
+most expensive, and everything downstream only checks whether the code matches
+the plan — **nothing else asks whether the plan was right.**
 
 ## Building in parallel
 

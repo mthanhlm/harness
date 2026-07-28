@@ -61,6 +61,19 @@ fresh clone has none even with CodeGraph installed globally:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
 ```
 
+Read what this project already decided, before deciding anything:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" show
+```
+
+Every session otherwise starts from nothing — the same ground gets re-covered
+and the same deferred item gets deferred again. If the roadmap names something
+this request touches, say so out loud rather than silently re-litigating it. And
+if it contradicts what is being asked for now, that is worth raising: a past
+decision is evidence, not an instruction, but reversing one by accident is how a
+codebase acquires two of everything.
+
 It builds the index if it is missing, does nothing if it is already there, and
 says so plainly if CodeGraph is unavailable. Relay its line to the user when it
 had to build one. Then search:
@@ -206,6 +219,24 @@ On **Disagreement**: if you genuinely have none, write "None." and move on. Do n
 manufacture an objection to look rigorous — an invented concern trains the reader
 to skim, which is exactly when the real one gets missed.
 
+## Stage 2b — Have the plan argued against
+
+Once the plan is written and **before** presenting it, if it spans more than
+about three files, launch `harness:plan-challenger` on it. Below that, skip —
+ceremony on a small request is how a process gets bypassed.
+
+It reads the plan, not the code, and it is briefed to argue for less: what to
+cut, what the smaller version is, and whether the verification would actually
+fail on a broken implementation. Give it the contract's path and the request.
+
+This is the one place nothing else covers. Everything downstream checks whether
+the code matches the plan; **nothing else asks whether the plan was right**, and
+by then it is the most expensive thing to have got wrong.
+
+Act on it before presenting. If you cut something, cut it. If you disagree, keep
+it and say why in one line — the user should see that the argument happened and
+how it was settled, not a plan that quietly survived it.
+
 ## Stage 3 — Get approval, and actually stop
 
 Present the goal, the user flow, the data flow, the verdict and the budget —
@@ -242,11 +273,12 @@ yours to fix.
 
 When the build is done and the verification command passes, invoke the `review`
 skill. It picks the specialists this particular change needs, runs them in
-parallel on a stronger model, and refutes each finding before reporting.
+parallel — each in a context spent only on the diff — and refutes each finding
+before reporting.
 
 Do not skip this because the work looks fine. Looking fine is what a defect does.
 
-## Stage 6 — Report
+## Stage 6 — Report, and leave a record
 
 In order: what was built, the verification command and its real output, what the
 review found, and anything you deliberately left alone because it was out of
@@ -255,6 +287,24 @@ into.
 
 If the review found nothing, say so plainly. Sound work reviewing clean is a
 result.
+
+Then write down what the next session would otherwise have to rediscover:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" append "<one-line title>" <<'EOF'
+- decided: <a choice made here, and why, in one line>
+- deferred: <something real that was found and not fixed, and why>
+EOF
+```
+
+**Decisions and deferred work only.** Not what happened — a session narrative
+rots into a wall nobody reads, and then the roadmap is worth nothing to the
+session that needed it. The test is whether it would change what someone does
+next. "Rewrote the parser" would not; "chose to withhold repo-authored commands
+rather than allowlist them, because an allowlist has to contain npm" would.
+
+Nothing worth recording is a legitimate answer on a small change. Say so and
+skip it rather than padding the file.
 
 ## When to stop and hand back
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 
 import bash_watch
+import local_ignore
 from detect import get_profile
 from state import (
     emit,
@@ -80,6 +81,9 @@ def main() -> int:
 
     event = read_event()
     root = repo_root(event.get("cwd"))
+    # Local-only, idempotent, and invisible in any diff — the plugin's own
+    # scratch directories are not part of what this repository ships.
+    local_ignore.ensure(root)
     profile = get_profile(root)
 
     session = load_session(event.get("session_id", "unknown"))

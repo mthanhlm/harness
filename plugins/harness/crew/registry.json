@@ -125,6 +125,12 @@
       "always": true
     },
     {
+      "name": "plan-challenger",
+      "phase": "before",
+      "when": "A plan has been drafted and not yet approved, and it spans more than about three files. Skipped below that: ceremony on a small request is how a process gets bypassed.",
+      "always": false
+    },
+    {
       "name": "reviewer-correctness",
       "phase": "after",
       "when": "Any change to behaviour.",
