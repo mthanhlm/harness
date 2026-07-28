@@ -91,6 +91,10 @@ def test_the_contract_gate_stays_quiet_inside_a_worker(data_dir, git_repo, hook_
     The inverted guard is the expensive mutation here: the user would silently
     never be asked to plan, and workers would raise prompts in the lead's
     session with no context to decide from.
+
+    Only the contract prompt is silent. A worker writing over another worker is
+    denied — see below — so this asserts on the absence of a *question*, not on
+    an empty response in general.
     """
     push_past_the_threshold(git_repo, hook_env)
 
@@ -99,3 +103,55 @@ def test_the_contract_gate_stays_quiet_inside_a_worker(data_dir, git_repo, hook_
     )
 
     assert response == {}
+
+
+def test_a_worker_is_denied_a_file_another_worker_already_wrote(data_dir, git_repo, hook_env):
+    """The one failure parallel work adds, and the only one it cannot report.
+
+    Last write wins, with no error and no conflict marker, so nothing
+    downstream can find it: the end-of-turn gate sees a file that was checked
+    and passes it. If this deny inverts, fan-out silently drops a slice.
+    """
+    run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo)
+
+    response = run_hook(
+        "pre_edit_gate.py", gate_payload(git_repo, "a.py", "worker-b"), hook_env, git_repo
+    )
+
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "worker-a" in response["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_worker_may_rewrite_its_own_file(data_dir, git_repo, hook_env):
+    """Editing a file twice is ordinary work, not a collision."""
+    run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo)
+
+    response = run_hook(
+        "pre_edit_gate.py", gate_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo
+    )
+
+    assert response == {}
+
+
+def test_a_worker_may_edit_a_file_the_lead_already_touched(data_dir, git_repo, hook_env):
+    """The lead writes the failing test before it fans out.
+
+    Counting `main` as a colliding writer would deny the worker that owns that
+    test file — turning the plan's own prescribed order into a blocked edit.
+    """
+    run_hook("post_edit_check.py", edit_payload(git_repo, "a.py"), hook_env, git_repo)
+
+    response = run_hook(
+        "pre_edit_gate.py", gate_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo
+    )
+
+    assert response == {}
+
+
+def test_the_lead_is_never_denied_a_workers_file(data_dir, git_repo, hook_env):
+    """`main` resolves collisions; it does not get stopped by them."""
+    run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo)
+
+    response = run_hook("pre_edit_gate.py", gate_payload(git_repo, "a.py"), hook_env, git_repo)
+
+    assert response.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"

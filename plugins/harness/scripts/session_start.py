@@ -74,6 +74,27 @@ def _describe(profile: dict) -> str:
     return "\n".join(lines)
 
 
+def _withheld_warning(profile: dict) -> str | None:
+    """The same fact as above, addressed to the person who can act on it.
+
+    Granting a repository's commands is the one decision here that only a human
+    can make, and `additionalContext` goes to the model. So for a full day it
+    was announced 28 times to something that cannot run `/harness:trust`, while
+    every project check in every repo stayed switched off and the end-of-turn
+    gate reported passes.
+    """
+    withheld = profile.get("withheld_checks") or []
+    if not withheld:
+        return None
+    commands = ", ".join(f"`{' '.join(c.get('argv') or [])}`" for c in withheld[:3])
+    more = f" and {len(withheld) - 3} more" if len(withheld) > 3 else ""
+    return (
+        f"harness: {len(withheld)} check(s) this repo defines are NOT running"
+        f" ({commands}{more}). Nothing here is verified against them until you run"
+        " /harness:trust."
+    )
+
+
 def main() -> int:
     if gates_disabled():
         return 0
@@ -101,14 +122,16 @@ def main() -> int:
     trace("SessionStart", event.get("session_id", "?"), "bootstrapped",
           source=event.get("source"), agent=event.get("agent_type"))
 
-    emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": _describe(profile),
-            }
+    payload = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": _describe(profile),
         }
-    )
+    }
+    warning = _withheld_warning(profile)
+    if warning:
+        payload["systemMessage"] = warning
+    emit(payload)
     return 0
 
 

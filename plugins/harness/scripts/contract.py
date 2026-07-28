@@ -20,6 +20,15 @@ _VERDICT_RE = re.compile(r"^\s*verdict:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 # Scope entries are markdown bullets naming a path, optionally followed by a
 # dash and a description: "- src/auth/session.ts — refresh handling".
 _SCOPE_ENTRY_RE = re.compile(r"^\s*[-*]\s+`?([\w./\-]+\.[\w]+)`?", re.MULTILINE)
+# Where the agreed list stops and the deliberately-excluded list begins.
+# Anchored to the start of a line: an unanchored search for "not chang" also
+# matches a plan that merely *mentions* the section in a bullet, which truncates
+# the fence at that bullet and quietly drops every agreed file after it. One
+# real plan parsed 5 of its 15 files that way, and a fence that silently shrinks
+# is worse than none, because the gate still reports clean.
+_NOT_CHANGING_RE = re.compile(
+    r"^\s*(?:\*\*)?Explicitly\s+NOT\s+chang\w*", re.MULTILINE | re.IGNORECASE
+)
 
 
 def contract_path(session_id: str) -> Path:
@@ -56,7 +65,7 @@ class Contract:
         if not section:
             return []
         body = section.group(1)
-        cutoff = re.search(r"not\s+chang", body, re.IGNORECASE)
+        cutoff = _NOT_CHANGING_RE.search(body)
         if cutoff:
             body = body[: cutoff.start()]
         return _SCOPE_ENTRY_RE.findall(body)

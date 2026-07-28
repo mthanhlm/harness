@@ -44,15 +44,25 @@ you have no evidence works.
 
 ## 3. Split the work, or decide not to
 
-The plan's Scope section assigns files to workers. Fan out when there are **three
-or more files whose slices share no file between them**, and each slice is real
-work rather than a one-line edit. Below that, launching workers costs more in
-coordination than it saves in wall-clock, and a single thread is faster.
+The plan's Scope section has a **Slices** block, and the plan was told to fill it
+in whenever the file list ran past two files — including to write "serial,
+because X must land before Y" when that is the answer. So read what it decided
+rather than re-deriving it: the partition was worked out with the whole design in
+view, which is not where you are standing now.
 
-Before launching, check the split for overlap. **Two workers editing one file
-lose code silently** — no error, no conflict marker, whoever writes last wins.
-If the plan's assignment overlaps, do not paper over it: say so and fix the
-assignment first.
+Fan out when the plan named **two or more slices that share no file**, and each
+is real work rather than a one-line edit. Below that a single thread is faster,
+because launching workers costs more in coordination than it saves.
+
+If the plan left the block off entirely, that is a plan written before this was
+expected. Decide it yourself on the same rule, and say which you chose.
+
+Before launching, check the split for overlap yourself. **Two workers editing one
+file lose code silently** — no error, no conflict marker, whoever writes last
+wins. The edit gate now refuses the second worker's write rather than trusting
+the plan, so the failure surfaces as a stalled slice instead of lost code; that
+is a backstop, not a substitute for a correct partition. If the plan's assignment
+overlaps, say so and fix it before launching.
 
 Launch every worker in a **single message** so they run at once, and **pass
 `run_in_background: false`** — agents background themselves by default, which

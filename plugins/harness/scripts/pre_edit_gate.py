@@ -21,7 +21,16 @@ import sys
 from pathlib import Path
 
 import contract as contract_mod
-from state import emit, gates_disabled, guard, read_event, session_state, writer_id
+from state import (
+    emit,
+    gates_disabled,
+    guard,
+    read_event,
+    read_json,
+    session_state,
+    shards_dir,
+    writer_id,
+)
 
 # Below both of these, a change is small enough that stopping to agree a
 # contract costs more than it saves.
@@ -51,6 +60,43 @@ def _ask(reason: str) -> None:
     )
 
 
+def _deny(reason: str) -> None:
+    emit(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }
+    )
+
+
+def _other_worker_holding(session_id: str, writer: str, target: str) -> str | None:
+    """Another worker that has already written this file, if there is one.
+
+    This is the one failure parallel work adds and the only one it cannot
+    report: two workers editing one file, last write wins, no error and no
+    conflict marker. It is undetectable afterwards, so it is refused at the edit
+    rather than found at the end.
+
+    Only other *workers* count. The lead legitimately touches files before it
+    fans out — it writes the failing test first — so counting `main` here would
+    deny the worker that owns the test file it just wrote.
+    """
+    posix = Path(target).as_posix()
+    for shard in shards_dir(session_id).glob("*.json"):
+        other = shard.stem
+        if other in (writer, "main"):
+            continue
+        record = read_json(shard, default=None)
+        if not isinstance(record, dict):
+            continue
+        if any(Path(p).as_posix() == posix for p in (record.get("files_touched") or [])):
+            return other
+    return None
+
+
 def main() -> int:
     if gates_disabled():
         return 0
@@ -61,13 +107,23 @@ def main() -> int:
     target = _target(event)
     if target is None:
         return 0
-    if writer_id(event) != "main":
+    session_id = event.get("session_id", "unknown")
+    writer = writer_id(event)
+    if writer != "main":
         # A worker is executing a plan that was already approved, and cannot
         # answer a question meant for the user anyway: `ask` inside a subagent
-        # surfaces in the lead's session with no context to decide from.
+        # surfaces in the lead's session with no context to decide from. The one
+        # thing it is stopped for is writing over another worker.
+        holder = _other_worker_holding(session_id, writer, target)
+        if holder:
+            _deny(
+                f"{Path(target).name} has already been written by {holder}, which owns a"
+                " different slice of this plan. Two workers editing one file lose code"
+                " silently — whoever writes last wins. Report this file as one you could"
+                " not take rather than editing it."
+            )
         return 0
 
-    session_id = event.get("session_id", "unknown")
     existing = contract_mod.load(session_id)
 
     with session_state(session_id) as session:

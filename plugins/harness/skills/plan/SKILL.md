@@ -39,9 +39,13 @@ opinion**:
 | `harness:reviewer-*` | The review at the end. |
 | `harness:refuter` | Kills weak findings before they reach the user. |
 
-**The `harness:` prefix is required.** These agents ship inside a plugin, so the
-Task tool addresses them by a scoped name. `architect` alone fails with an
-unknown-agent error.
+**The `harness:` prefix is required — for the skills below as much as these
+agents.** Everything here ships inside a plugin, so both the Task tool and the
+Skill tool address it by a scoped name: `harness:architect`, not `architect`;
+`harness:implement`, not `implement`. A bare name does not resolve, and the
+observed failure is not an error message — it is falling back to `Read` on the
+skill's own `SKILL.md`. That looks like it worked. It is not the same thing: a
+read document is information, an invoked skill is instructions.
 
 Launch independent ones in a **single message** so they run concurrently, and
 **wait for them — pass `run_in_background: false`.** Subagents run in the
@@ -186,13 +190,24 @@ gate still reporting clean. If that makes the list long, the list is long.>
 Also name the failing test's own file here. The build is told to write it first,
 and the fence will otherwise flag it as an unagreed change.
 
-Slices (only when three or more files can be built at once):
+Slices:
 - worker 1 — path/to/a.ts, path/to/b.ts
 - worker 2 — path/to/c.ts
-<Every file appears under exactly one worker. Two workers sharing a file lose
-code silently, with no error and no conflict marker. If the work cannot be cut
-that way, say so and leave this out — serial is the correct answer more often
-than not.>
+<**Work this out every time the list runs past two files, and write what you
+concluded either way.** Do not leave the section off: a plan that is silent here
+is indistinguishable from one that considered a split and declined, and the
+silent version is what happens by default — across a full day of real use, no
+plan ever wrote this line, so the workers never ran once.
+
+Group the files by what they depend on, then say which groups share nothing. Two
+groups that share no file can be built at the same time; a chain where each step
+needs the last cannot, and "serial, because X must land before Y" is a complete
+and correct answer to write here.
+
+Every file appears under exactly one worker. Two workers sharing a file lose code
+silently — whoever writes last wins. The edit gate now refuses that write rather
+than trusting the split, but a refused edit is still a stalled slice, so get the
+partition right here.>
 
 Explicitly NOT changing:
 - <the neighbouring things that will look tempting mid-task>
@@ -277,9 +292,10 @@ the record, and that is enough.
 
 ## Stage 4 — Build it
 
-Invoke the `implement` skill and follow it. It holds the rules for building
-against an approved plan: failing test first, stay inside the scope fence, reuse
-what the plan said to reuse, fix what the automatic checks report.
+Invoke `harness:implement` with the Skill tool and follow it — the scoped name,
+not `implement`. It holds the rules for building against an approved plan:
+failing test first, stay inside the scope fence, reuse what the plan said to
+reuse, fix what the automatic checks report.
 
 The checks run on their own as you edit. A check that fires has already confirmed
 the problem is new — other diagnostics in the same file predate you and are not
@@ -287,10 +303,10 @@ yours to fix.
 
 ## Stage 5 — Review it
 
-When the build is done and the verification command passes, invoke the `review`
-skill. It picks the specialists this particular change needs, runs them in
-parallel — each in a context spent only on the diff — and refutes each finding
-before reporting.
+When the build is done and the verification command passes, invoke
+`harness:review` with the Skill tool — again the scoped name. It picks the
+specialists this particular change needs, runs them in parallel — each in a
+context spent only on the diff — and refutes each finding before reporting.
 
 Do not skip this because the work looks fine. Looking fine is what a defect does.
 

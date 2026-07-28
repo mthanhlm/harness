@@ -79,11 +79,14 @@ def cost_of(model: str, usage: dict[str, Any]) -> float:
     return (billable_in / MILLION) * rate_in + (out / MILLION) * rate_out
 
 
-def read_transcript(path: str) -> dict[str, Any]:
-    """Sum token usage and cost per model from a session transcript."""
-    totals: dict[str, Any] = {"models": {}, "cost_usd": 0.0, "assistant_turns": 0}
+def _empty_totals() -> dict[str, Any]:
+    return {"models": {}, "cost_usd": 0.0, "assistant_turns": 0}
+
+
+def _accumulate(path: Path, totals: dict[str, Any]) -> dict[str, Any]:
+    """Add one transcript's usage to `totals`, in place."""
     try:
-        handle = Path(path).open(encoding="utf-8")
+        handle = path.open(encoding="utf-8")
     except OSError:
         return totals
 
@@ -114,6 +117,46 @@ def read_transcript(path: str) -> dict[str, Any]:
             entry["cost_usd"] += cost
             totals["cost_usd"] += cost
             totals["assistant_turns"] += 1
+    return totals
+
+
+def subagent_transcripts(path: str) -> list[Path]:
+    """Where a session's subagents wrote, given the session's own transcript.
+
+    Claude Code puts them in a directory named for the session, beside the
+    session file: `<project>/<session-id>/subagents/agent-*.jsonl`. Nothing in
+    the main transcript records them — there are no sidechain turns in it — so a
+    ledger that reads one file sees only the lead.
+
+    That is the plugin's central economic claim going unmeasured: delegation to
+    cheaper models is exactly the spend it could not see. In one real session it
+    was $48.78 of subagent work against $117.27 recorded.
+    """
+    main = Path(path)
+    directory = main.parent / main.stem / "subagents"
+    try:
+        return sorted(p for p in directory.glob("*.jsonl") if p.is_file())
+    except OSError:
+        return []
+
+
+def read_transcript(path: str) -> dict[str, Any]:
+    """Sum token usage and cost per model for a session, lead and subagents.
+
+    The two are kept apart rather than merged. Knowing the total matters, but
+    the question the report exists to answer — is delegating to a cheap model
+    worth it — needs the split, and a single figure cannot be un-added later.
+    """
+    totals = _accumulate(Path(path), _empty_totals())
+
+    delegated = _empty_totals()
+    files = subagent_transcripts(path)
+    for transcript in files:
+        _accumulate(transcript, delegated)
+    delegated["count"] = len(files)
+
+    totals["subagents"] = delegated
+    totals["total_cost_usd"] = totals["cost_usd"] + delegated["cost_usd"]
     return totals
 
 
@@ -167,11 +210,26 @@ def summarize(entries: list[dict[str, Any]]) -> str:
     if not entries:
         return "No sessions recorded yet. The ledger fills as you work with the harness on."
 
-    total_cost = sum(float(e.get("usage", {}).get("cost_usd") or 0) for e in entries)
+    # `total_cost_usd` is absent from entries written before subagents were
+    # counted; falling back to the lead's own cost keeps those readable rather
+    # than reporting them as free.
+    def entry_cost(entry: dict[str, Any]) -> float:
+        usage = entry.get("usage") or {}
+        if usage.get("total_cost_usd") is not None:
+            return float(usage["total_cost_usd"])
+        return float(usage.get("cost_usd") or 0)
+
+    total_cost = sum(entry_cost(e) for e in entries)
+    lead_cost = sum(float((e.get("usage") or {}).get("cost_usd") or 0) for e in entries)
+    delegated_cost = total_cost - lead_cost
+
     per_model: dict[str, float] = {}
     for entry in entries:
-        for model, stats in (entry.get("usage", {}).get("models") or {}).items():
-            per_model[model] = per_model.get(model, 0.0) + float(stats.get("cost_usd") or 0)
+        usage = entry.get("usage") or {}
+        buckets = [usage.get("models") or {}, (usage.get("subagents") or {}).get("models") or {}]
+        for models in buckets:
+            for model, stats in models.items():
+                per_model[model] = per_model.get(model, 0.0) + float(stats.get("cost_usd") or 0)
 
     checks_run = sum(int(e.get("checks_run") or 0) for e in entries)
     checks_failed = sum(int(e.get("checks_failed") or 0) for e in entries)
@@ -188,6 +246,8 @@ def summarize(entries: list[dict[str, Any]]) -> str:
         out.append(f"  {model:28} ${cost:8.2f}  ({share:.0f}%)")
 
     out += [
+        "",
+        f"Lead session: ${lead_cost:8.2f}   delegated to subagents: ${delegated_cost:8.2f}",
         "",
         f"Per-edit checks: {checks_run} run, {checks_failed} caught a problem the edit introduced",
         f"Contracts agreed before coding: {contracts} of {len(entries)} sessions",

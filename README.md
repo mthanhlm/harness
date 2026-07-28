@@ -10,11 +10,25 @@ judgement call delegated to a specialist reading in a context of its own.
 ## Install
 
 ```bash
+claude plugin marketplace add mthanhlm/harness
+claude plugin install harness@autonxt-harness
+```
+
+Updates come from the remote, so a change is only live once it is pushed:
+
+```bash
+claude plugin marketplace update autonxt-harness
+```
+
+To develop against a local clone instead — edits take effect on the next session
+with no push cycle:
+
+```bash
 claude plugin marketplace add ~/lam/harness
 claude plugin install harness@autonxt-harness
 ```
 
-To work on the plugin without installing it, load it for one session:
+Or load it for a single session without installing at all:
 
 ```bash
 claude --plugin-dir ~/lam/harness/plugins/harness

@@ -71,7 +71,24 @@ def _out_of_scope(session_id: str, touched: list[str]) -> list[str]:
     return strays
 
 
-def _run_until_failure(profile: dict, root: Path) -> tuple[list, list, list]:
+def _pending_contract_note(session_id: str) -> str | None:
+    """Why the scope fence is silent even though a plan exists.
+
+    `_out_of_scope` returns nothing for an unapproved contract, so writing a
+    plan and never approving it is strictly worse than not planning: the
+    appearance of a fence with none of the effect. Nothing said so, and three of
+    six contracts in one day sat pending while edits landed against them.
+    """
+    agreed = contract_mod.load(session_id)
+    if not agreed or agreed.approved:
+        return None
+    return (
+        "a plan was written but never approved, so the scope fence is not"
+        " active — set `status: approved` in the contract to arm it"
+    )
+
+
+def _run_until_failure(checks: list[dict], root: Path) -> tuple[list, list, list]:
     """Run project checks cheapest-first, stopping at the first blocking failure.
 
     There is no value in spending a minute on a bundle when the type-checker has
@@ -82,7 +99,7 @@ def _run_until_failure(profile: dict, root: Path) -> tuple[list, list, list]:
     started is not this turn's problem, and saying otherwise sends the model off
     to fix something nobody asked about.
     """
-    checks = sorted(heavy_checks(profile), key=lambda c: COST_ORDER.get(c["kind"], 9))
+    checks = sorted(checks, key=lambda c: COST_ORDER.get(c["kind"], 9))
     passed, failed, inherited = [], [], []
     for check in checks:
         started = time.monotonic()
@@ -125,18 +142,24 @@ def main() -> int:
         # model frequently answers without editing (it explains, or reviews, or
         # asks). Skipping then turns a block into a silent pass and lets the turn
         # end red, which is the one outcome this gate exists to prevent.
+        # Keyed on the file count as well as the line count. `post_edit_check`
+        # bumps `lines_changed`, but `bash_watch` records only `files_touched` —
+        # so a session that goes on editing through the shell holds the same
+        # line count forever and every later Stop takes this skip. That was 92
+        # skips against 46 real runs in one day, with the file count climbing
+        # the whole time. Both halves have to move for the gate to stay honest,
+        # and the count still repeats on a turn that changed nothing, which is
+        # what keeps a conversational turn from running the suite.
         lines_now = int(session.get("lines_changed") or 0)
-        if session.get("heavy_ran_at") == lines_now and not session.get("heavy_blocked"):
-            trace("Stop", session_id, "skipped: already passed at this line count",
-                  lines=lines_now)
+        ran_at = [len(touched), lines_now]
+        if session.get("heavy_ran_at") == ran_at and not session.get("heavy_blocked"):
+            trace("Stop", session_id, "skipped: already passed at this file and line count",
+                  files=len(touched), lines=lines_now)
             return 0
-
-        trace("Stop", session_id, "running project checks",
-              files=len(touched), lines=lines_now)
 
         blocks = int(session.get("consecutive_stop_blocks") or 0)
         if blocks >= MAX_CONSECUTIVE_BLOCKS:
-            session["heavy_ran_at"] = lines_now
+            session["heavy_ran_at"] = ran_at
             emit(
                 {
                     "systemMessage": (
@@ -152,7 +175,7 @@ def main() -> int:
         strays = _out_of_scope(session_id, touched)
         if strays and not session.get("scope_reported"):
             session["scope_reported"] = True
-            session["heavy_ran_at"] = lines_now
+            session["heavy_ran_at"] = ran_at
             listed = "\n".join(f"  - {s}" for s in strays)
             emit(
                 {
@@ -174,8 +197,35 @@ def main() -> int:
 
         root = repo_root(event.get("cwd") or session.get("repo_root"))
         profile = get_profile(root)
-        passed, failed, inherited = _run_until_failure(profile, root)
-        session["heavy_ran_at"] = lines_now
+        checks = heavy_checks(profile)
+        pending = _pending_contract_note(session_id)
+
+        # "Passed" and "nothing ran" are not the same fact, and reporting them
+        # with the same word is the failure this gate exists to prevent. A repo
+        # whose checks are all withheld for want of trust has none of them here,
+        # and the old branch called that a pass.
+        if not checks:
+            session["heavy_ran_at"] = ran_at
+            withheld = profile.get("withheld_checks") or []
+            trace("Stop", session_id, "nothing to verify",
+                  files=len(touched), withheld=len(withheld))
+            notes = ["nothing to verify — this project defines no checks the harness can run"]
+            if withheld:
+                names = ", ".join(f"`{' '.join(c.get('argv') or [])}`" for c in withheld[:3])
+                notes = [
+                    f"nothing was verified: {len(withheld)} check(s) this repo defines are"
+                    f" withheld until it is trusted ({names}). Run /harness:trust to grant them"
+                ]
+            if pending:
+                notes.append(pending)
+            emit({"systemMessage": f"harness: {'; '.join(notes)}.", "suppressOutput": True})
+            return 0
+
+        trace("Stop", session_id, "running project checks",
+              files=len(touched), lines=lines_now)
+
+        passed, failed, inherited = _run_until_failure(checks, root)
+        session["heavy_ran_at"] = ran_at
 
         blocking = [r for r in failed if r.check.get("blocking", True)]
         if not blocking:
@@ -188,6 +238,8 @@ def main() -> int:
             session["heavy_blocked"] = {}
             notes = [f"{r.label} reports issues" for r in failed]
             notes += [f"{r.label} was already failing before this session" for r in inherited]
+            if pending:
+                notes.append(pending)
             if notes:
                 emit({"systemMessage": f"harness: {'; '.join(notes)} (not blocking).", "suppressOutput": True})
             return 0
@@ -207,7 +259,7 @@ def main() -> int:
         if seen_before and attempts >= MAX_CONSECUTIVE_BLOCKS:
             trace("Stop", session_id, "giving up after repeats", check=result.label,
                   attempts=attempts)
-            session["heavy_ran_at"] = lines_now
+            session["heavy_ran_at"] = ran_at
             emit(
                 {
                     "systemMessage": (

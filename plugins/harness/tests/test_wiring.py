@@ -98,6 +98,48 @@ def test_the_registry_and_the_lens_frontmatter_agree_on_paths():
         )
 
 
+SIBLINGS = sorted(p.parent.name for p in SKILL_FILES)
+
+
+@pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_a_skill_never_tells_the_model_to_invoke_a_sibling_by_bare_name(path):
+    """`implement` does not resolve; `harness:implement` does.
+
+    This one is worth a test because it fails *quietly and plausibly*. An
+    unresolvable skill name does not raise — the model falls back to reading the
+    skill's own SKILL.md, which looks like it worked and is not the same thing.
+    A read document is information; an invoked skill is instructions. It went
+    unnoticed through a full day of real use, in a file that elsewhere states
+    the prefix rule for agents.
+    """
+    text = path.read_text(encoding="utf-8")
+    for name in SIBLINGS:
+        if name == path.parent.name:
+            continue
+        for match in re.finditer(rf"`{re.escape(name)}`\s+skill", text):
+            prefix = text[max(0, match.start() - 10) : match.start()]
+            assert "harness:" in prefix, (
+                f"{path.parent.name} names the `{name}` skill without the harness: prefix"
+            )
+
+
+def test_the_withheld_check_warning_reaches_the_user():
+    """`additionalContext` goes to the model, `systemMessage` goes to the human.
+
+    Granting a repo's commands is the one decision only a person can make. Sent
+    to the wrong channel it was announced 28 times in one day to something that
+    cannot run `/harness:trust`, while every project check stayed off and the
+    end-of-turn gate reported passes.
+    """
+    source = (PLUGIN / "scripts" / "session_start.py").read_text(encoding="utf-8")
+    warning = re.search(r"def _withheld_warning.*?(?=\ndef )", source, re.DOTALL)
+    assert warning, "session_start has no _withheld_warning"
+    assert "/harness:trust" in warning.group(0)
+    assert re.search(r'payload\["systemMessage"\]\s*=', source), (
+        "the warning must be emitted as a top-level systemMessage, not inside hookSpecificOutput"
+    )
+
+
 def test_write_capable_agents_are_named_here_on_purpose():
     """Only `worker` may edit. A second write-capable agent is a decision, not
     an accident, and the parallel-edit safety was designed around exactly one."""

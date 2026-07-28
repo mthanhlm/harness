@@ -42,9 +42,10 @@ A gap against an agreed contract outranks anything a reviewer finds on taste.
 
 ## 3. Pick the crew
 
-Use the `crew` skill to select the roles this change needs, and tell the user
-which ones you chose and which you skipped. Running every reviewer on every
-change produces noise, and noise trains people to skim.
+Use `harness:crew` — the scoped name, since the Skill tool cannot resolve a bare
+`crew` — to select the roles this change needs, and tell the user which ones you
+chose and which you skipped. Running every reviewer on every change produces
+noise, and noise trains people to skim.
 
 ## 4. Run the reviewers in parallel
 
