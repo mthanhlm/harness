@@ -80,6 +80,9 @@ against fanning out. For each file:
 
 - **Reuse what the plan says to reuse.** It was chosen after a search; do not
   re-litigate it by writing a fresh helper because that felt faster.
+- **Edit with `Edit` or `Write`.** Shell edits are recorded now, but after the
+  fact — they miss the per-edit check, so a mistake surfaces at the end of the
+  turn instead of immediately.
 - **Follow the conventions of the file you are in.** Match the surrounding
   naming, error handling and structure. A correct change in a foreign style still
   costs the next reader.

@@ -28,6 +28,7 @@ claude --plugin-dir ~/lam/harness/plugins/harness
 | Prompt submitted | Nudges toward `/harness:plan` when the request looks like implementation work |
 | Before an edit | Past 3 files or 100 lines with no agreed plan, asks — **once per session** |
 | After an edit | Format, lint, syntax and types on the touched file (~0.1–0.2s measured) |
+| A shell command runs | Records what it changed, so the scope fence can see it |
 | A worker finishes | Re-checks every file that worker touched, and only those |
 | Turn ends | Full type-check, tests, build, and a scope check against the plan |
 | Session ends | Records real token cost to the ledger |
@@ -210,11 +211,11 @@ machinery, and is worth switching to if early access opens up on this account.
   directory (`~/.claude/plugins/data/harness*/gate.log`). Every hook records why
   it decided what it decided. This is how the skip-after-block bug was found: a
   gate that silently does nothing looks exactly like a gate that found nothing.
-- **Edits made through `Bash` are invisible to every gate.** The hooks match
-  `Edit|Write|MultiEdit|NotebookEdit`, so a change made with `sed -i` or a shell
-  redirect never enters `files_touched`, is never checked, and never reaches the
-  scope fence. Pre-existing, but it matters more now that `worker` subagents hold
-  `Bash` and run unattended.
+- **Edits made through `Bash` are checked late, not immediately.** They now reach
+  `files_touched` and so the scope fence, the per-worker check and the end-of-turn
+  gate — but not the per-edit check, which needs a file path the shell does not
+  provide. A shell edit is caught at the end of the turn rather than the moment it
+  is made.
 - **A repo's `.harness.json` can run arbitrary commands.** Its `checks` entries
   are adopted verbatim, and `argv` goes straight to `subprocess`. Cloning an
   untrusted repo and editing one file in it is enough. Read it before working in

@@ -49,6 +49,17 @@
             "statusMessage": "harness: checking the edited file"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/bash_watch.py"],
+            "timeout": 15
+          }
+        ]
       }
     ],
     "SubagentStop": [

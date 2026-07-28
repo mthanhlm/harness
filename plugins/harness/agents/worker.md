@@ -41,6 +41,10 @@ the same time**, in the same working tree.
 
 ## Build it
 
+- **Change files with `Edit` or `Write`, not through a shell.** A `sed -i` or a
+  redirect is recorded, but only after the fact — it skips the check that runs on
+  each edit and tells you immediately what you broke. You would find out at the
+  end instead, with more built on top of it.
 - **Reuse what the brief says to reuse.** It was chosen after a search of the
   codebase. Writing a fresh helper because that felt quicker is how the same
   function ends up in the codebase twice.

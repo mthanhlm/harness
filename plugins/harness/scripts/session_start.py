@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 
+import bash_watch
 from detect import get_profile
 from state import (
     emit,
@@ -78,6 +79,10 @@ def main() -> int:
         session["lines_changed"] = 0
         session["consecutive_stop_blocks"] = 0
         session["heavy_blocked"] = {}
+        # What was already dirty before this session touched anything. Shell
+        # commands are noticed by diffing against this, so it must be taken
+        # before any work happens and must not move afterwards.
+        session["bash_baseline"] = sorted(bash_watch._porcelain(root) or [])
     save_session(session, reset=fresh)
     trace("SessionStart", event.get("session_id", "?"), "bootstrapped",
           source=event.get("source"), agent=event.get("agent_type"))
