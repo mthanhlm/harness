@@ -5,7 +5,7 @@ A Claude Code plugin that blocks on facts and advises on taste.
 One command — `/harness:plan` — takes a request from a vague sentence to reviewed,
 working code, stopping once for your approval. Underneath, it blocks on facts
 (syntax, types, tests) and advises on taste (design, bloat, docs), with every
-judgement call delegated to a specialist running on a stronger model.
+judgement call delegated to a specialist reading in a context of its own.
 
 ## Install
 
@@ -41,11 +41,12 @@ There is one entry point. Everything else the model loads for itself.
 |---|---|
 | `/harness:plan` | **Start here.** Understands the request, checks what exists, judges whether the code is worth building on, gets your approval — then builds and reviews it |
 | `/harness:review` | Standalone review, for code you didn't just write (a PR, inherited code) |
+| `/harness:trust` | Approve the commands a repository supplies for itself |
 | `/harness:report` | What recent sessions cost, and how often a gate caught something |
 | `/harness:switch off` | Kill switch |
 
 Hidden but model-invocable: `implement`, `crew`, `simplify`, `verify-tests`, and
-the six `lens-*` domain skills. Ask for them in plain language ("check whether
+the nine `lens-*` domain skills. Ask for them in plain language ("check whether
 these tests are real") and the model loads the right one.
 
 ## Which model runs what
@@ -112,6 +113,25 @@ Indexing is fast (a few hundred milliseconds on a small repo) and `codegraph ini
 writes a `.codegraph/` directory whose contents are self-ignored. It still leaves
 one untracked entry, so either commit `.codegraph/.gitignore` or add
 `.codegraph/` to the repo's own `.gitignore`.
+
+## A cloned repository does not get to run its code
+
+The harness executes what it detects, and some of what it detects is written by
+the repository rather than by this plugin — `.harness.json` check entries,
+`package.json` scripts, and any tool resolved out of `node_modules/.bin` or
+`.venv/bin`. All three arrive with a clone. Opening someone's repo and editing
+one file in it was enough to run whatever they specified, with your full
+permissions, no prompt, and nothing in the transcript.
+
+Now every check records who wrote its `argv`. Plugin-composed ones — `py_compile`,
+`node --check`, `bash -n` — always run; only the file path comes from outside.
+Repo-authored ones wait for `/harness:trust`, which shows you the commands before
+you approve them, once per repository and again if the repo changes what it runs.
+
+This is not the harness blocking by default. Your edit is never blocked; the
+degraded state is simply fewer checks, which is what already happens in a repo
+with no tooling. Session start says which ones are withheld, every session, so
+running less than you think is never silent.
 
 ## Building in parallel
 
@@ -216,10 +236,6 @@ machinery, and is worth switching to if early access opens up on this account.
   gate — but not the per-edit check, which needs a file path the shell does not
   provide. A shell edit is caught at the end of the turn rather than the moment it
   is made.
-- **A repo's `.harness.json` can run arbitrary commands.** Its `checks` entries
-  are adopted verbatim, and `argv` goes straight to `subprocess`. Cloning an
-  untrusted repo and editing one file in it is enough. Read it before working in
-  a repo you did not write.
 - **`/harness:report` under-reports and double-counts.** It reads only the main
   session transcript, so every subagent — including workers, where the editing now
   happens — is invisible to it. It also appends one entry per `SessionEnd`, each a

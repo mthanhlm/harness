@@ -56,6 +56,21 @@ def _describe(profile: dict) -> str:
             "No project tooling was detected, so only syntax checks run."
             " Verification for this repo has to come from something you run yourself."
         )
+
+    withheld = profile.get("withheld_checks") or []
+    if withheld:
+        # Said out loud every session until it is resolved. Quietly running
+        # fewer checks than the user believes is the failure mode this whole
+        # boundary would otherwise introduce.
+        commands = "; ".join(f"`{' '.join(c.get('argv') or [])}`" for c in withheld[:4])
+        lines.append(
+            f"\n{len(withheld)} check(s) this repository defines are NOT running: {commands}."
+            " They are commands the repo itself supplies rather than ones the harness"
+            " composed, so they wait until you have looked at them — cloning a"
+            " repository should not run its code. Approve with `/harness:trust`."
+            " Until then verification here is weaker than usual, which matters most"
+            " in a codebase you do not know."
+        )
     return "\n".join(lines)
 
 
