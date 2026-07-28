@@ -6,7 +6,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session_start.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/session_start.py"
+            ],
             "timeout": 20
           }
         ]
@@ -18,7 +20,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/prompt_gate.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/prompt_gate.py"
+            ],
             "timeout": 10
           }
         ]
@@ -31,7 +35,22 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/pre_edit_gate.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/pre_edit_gate.py"
+            ],
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/bash_watch.py"
+            ],
             "timeout": 15
           }
         ]
@@ -44,7 +63,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/post_edit_check.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/post_edit_check.py"
+            ],
             "timeout": 45,
             "statusMessage": "harness: checking the edited file"
           }
@@ -56,7 +77,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/bash_watch.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/bash_watch.py"
+            ],
             "timeout": 15
           }
         ]
@@ -68,7 +91,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/subagent_stop.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/subagent_stop.py"
+            ],
             "timeout": 120,
             "statusMessage": "harness: checking the worker's own files"
           }
@@ -81,7 +106,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/stop_gate.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/stop_gate.py"
+            ],
             "timeout": 600,
             "statusMessage": "harness: verifying the project still builds and passes"
           }
@@ -94,7 +121,9 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session_end.py"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/session_end.py"
+            ],
             "timeout": 30
           }
         ]

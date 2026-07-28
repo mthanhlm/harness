@@ -45,23 +45,58 @@ def repo_authored(profile: dict[str, Any]) -> list[dict[str, Any]]:
     return [c for c in profile.get("checks", []) if c.get("source") == "repo"]
 
 
-def digest(profile: dict[str, Any]) -> str:
-    """A stable fingerprint of every command this repo would have us run."""
-    commands = sorted(" ".join(c.get("argv") or []) for c in repo_authored(profile))
-    return hashlib.sha256("\n".join(commands).encode("utf-8")).hexdigest()[:16]
+def _file_hash(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return "absent"
+
+
+def _payload(root: Path | None, check: dict[str, Any]) -> str:
+    """What the command would actually execute, not just how it is spelled.
+
+    Two of the three doors are a stable indirection: `npm run --silent test`
+    never changes when the body of that script does, and
+    `node_modules/.bin/eslint` never changes when its bytes do. Hashing the
+    invocation alone made approving a repo once a standing grant on whatever it
+    later decided to run — which is the opposite of what this file promises.
+    """
+    argv = check.get("argv") or []
+    # json, not " ".join: ["sh","-c","a b"] and ["sh","-c a","b"] are different
+    # commands and joined to the same string.
+    parts = [json.dumps(argv)]
+    if root is None:
+        return "|".join(parts)
+
+    for manifest in ("package.json", ".harness.json"):
+        path = root / manifest
+        if path.is_file() and any(manifest.split(".")[0] in a or "run" in a for a in argv):
+            parts.append(_file_hash(path))
+    if argv:
+        first = Path(argv[0])
+        if first.is_absolute() and first.is_file() and str(first).startswith(str(root.resolve())):
+            parts.append(_file_hash(first))
+    return "|".join(parts)
+
+
+def digest(profile: dict[str, Any], root: Path | None = None) -> str:
+    """A fingerprint of every command this repo would have us run, and of what
+    those commands would execute."""
+    marks = sorted(_payload(root, c) for c in repo_authored(profile))
+    return hashlib.sha256("\n".join(marks).encode("utf-8")).hexdigest()[:16]
 
 
 def is_trusted(root: Path, profile: dict[str, Any]) -> bool:
     if not repo_authored(profile):
         return True  # Nothing to trust; do not ask about an empty set.
     stored = read_json(_record_path(root), default=None)
-    return isinstance(stored, dict) and stored.get("digest") == digest(profile)
+    return isinstance(stored, dict) and stored.get("digest") == digest(profile, root)
 
 
 def grant(root: Path, profile: dict[str, Any]) -> dict[str, Any]:
     record = {
         "repo_root": str(root),
-        "digest": digest(profile),
+        "digest": digest(profile, root),
         "commands": sorted(" ".join(c.get("argv") or []) for c in repo_authored(profile)),
     }
     write_json(_record_path(root), record)

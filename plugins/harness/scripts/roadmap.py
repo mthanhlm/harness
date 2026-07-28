@@ -45,9 +45,16 @@ def read(root: Path) -> str:
 
 
 def _entries(text: str) -> list[str]:
-    """Split into `## ` sections, newest first, discarding the preamble."""
-    parts = text.split("\n## ")
-    return [f"## {p.rstrip()}" for p in parts[1:]]
+    """Split into `## ` sections, newest first.
+
+    Anchored to the start of a line *and* tolerant of the file beginning with a
+    heading, because the header invites editing it by hand — and the first
+    version silently ate the newest entry of anyone who deleted the preamble.
+    """
+    import re
+
+    marks = [m.start() for m in re.finditer(r"^## ", text, re.MULTILINE)]
+    return [text[a:b].rstrip() for a, b in zip(marks, marks[1:] + [len(text)])]
 
 
 def append(root: Path, title: str, body: str) -> Path:

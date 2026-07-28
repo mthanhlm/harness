@@ -41,7 +41,7 @@ from state import profiles_dir, read_json, repo_key, write_json
 FAST_KINDS = ("syntax", "format", "lint", "typecheck")
 HEAVY_KINDS = ("typecheck", "lint", "test", "build")
 
-PROFILE_VERSION = 7
+PROFILE_VERSION = 8
 
 # Presence or content of these decides the profile, and changes to any of them
 # invalidate the cache.
@@ -81,10 +81,13 @@ def _check(
 ) -> dict[str, Any]:
     """One check. `source` records who wrote the `argv`, and it is load-bearing.
 
-    A check whose command this file composed is safe to run in any repo: only
-    the file path comes from outside. A check whose command came from the repo
-    is arbitrary code that arrived with a clone, and it does not run until the
-    user has said so. Nothing downstream can tell those apart without this.
+    The line is not who wrote the `argv` — it is whether running the command
+    executes code that lives in the working tree. `py_compile` and `node --check`
+    parse a file and stop, so they are safe in any repo. `pytest` imports
+    `conftest.py`, `go test` compiles `_test.go`, `cargo check` runs `build.rs`
+    and `eslint` loads `eslint.config.js`; the plugin composed all four commands
+    and every one of them runs code that arrived with the clone. Those are
+    `repo`, and they wait until the user has said so.
     """
     return {
         "kind": kind,
@@ -252,6 +255,7 @@ def _node_checks(root: Path) -> list[dict[str, Any]]:
                 [eslint, "--no-warn-ignored", "--max-warnings", "0", "{file}"],
                 scope="file",
                 label="eslint",
+                source="repo",
                 extensions=WEB_EXT,
             )
         )
@@ -263,6 +267,7 @@ def _node_checks(root: Path) -> list[dict[str, Any]]:
                 [prettier, "--check", "--no-color", "{file}"],
                 scope="file",
                 label="prettier",
+                source="repo",
                 blocking=False,
                 extensions=WEB_EXT + (".json", ".css", ".scss", ".md"),
             )
@@ -323,7 +328,7 @@ def _python_checks(root: Path) -> list[dict[str, Any]]:
 
     if mypy := _opted_in(root, "mypy", ("mypy.ini", ".mypy.ini")):
         checks.append(
-            _check("typecheck", [mypy, "{file}"], scope="file", label="mypy", extensions=PY_EXT)
+            _check("typecheck", [mypy, "{file}"], scope="file", label="mypy", extensions=PY_EXT, source="repo")
         )
     elif pyright := _opted_in(root, "pyright", ("pyrightconfig.json",)):
         checks.append(
@@ -331,7 +336,7 @@ def _python_checks(root: Path) -> list[dict[str, Any]]:
         )
 
     if _has_pytest(root) and (pytest := _local_bin(root, "pytest") or shutil.which("pytest")):
-        checks.append(_check("test", [pytest, "-q", "-x"], scope="project", label="pytest"))
+        checks.append(_check("test", [pytest, "-q", "-x"], scope="project", label="pytest", source="repo"))
     return checks
 
 
@@ -365,7 +370,7 @@ def _go_checks() -> list[dict[str, Any]]:
     checks = [
         _check("build", [go, "build", "./..."], scope="project", label="go build"),
         _check("lint", [go, "vet", "./..."], scope="project", label="go vet"),
-        _check("test", [go, "test", "./..."], scope="project", label="go test"),
+        _check("test", [go, "test", "./..."], scope="project", label="go test", source="repo"),
     ]
     if gofmt := shutil.which("gofmt"):
         checks.insert(
@@ -388,8 +393,8 @@ def _rust_checks() -> list[dict[str, Any]]:
         return []
     return [
         _check("format", [cargo, "fmt", "--check"], scope="project", label="cargo fmt", blocking=False),
-        _check("typecheck", [cargo, "check", "--quiet"], scope="project", label="cargo check"),
-        _check("test", [cargo, "test", "--quiet"], scope="project", label="cargo test"),
+        _check("typecheck", [cargo, "check", "--quiet"], scope="project", label="cargo check", source="repo"),
+        _check("test", [cargo, "test", "--quiet"], scope="project", label="cargo test", source="repo"),
     ]
 
 
@@ -501,10 +506,15 @@ def _mark_vendored(root: Path, profile: dict[str, Any]) -> None:
         if not argv:
             continue
         try:
-            if str(Path(argv[0]).resolve()).startswith(inside + "/"):
-                check["source"] = "repo"
+            # Both spellings, because `resolve()` follows symlinks: a committed
+            # `.venv/bin/mypy -> /usr/bin/make` would otherwise resolve outside
+            # the tree and be classed as the plugin's own command.
+            lexical = os.path.abspath(argv[0])
+            resolved = str(Path(argv[0]).resolve())
         except (OSError, ValueError):
             continue
+        if lexical.startswith(inside + "/") or resolved.startswith(inside + "/"):
+            check["source"] = "repo"
 
 
 def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:

