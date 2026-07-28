@@ -255,3 +255,21 @@ def test_changing_a_script_body_revokes_trust(data_dir, tmp_path):
     )
 
     assert not trust.is_trusted(repo, build_profile(repo))
+
+
+def test_a_repo_cannot_switch_the_checks_off_without_trust(data_dir, tmp_path):
+    """`disable` is repo content acting on the harness. Honouring it unasked
+    lets a clone disarm every gate by shipping one file."""
+    repo = tmp_path / "disarming"
+    repo.mkdir()
+    (repo / "a.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")  # makes py_compile apply
+    (repo / ".harness.json").write_text(json.dumps({"disable": ["syntax"]}), encoding="utf-8")
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"]):
+        subprocess.run(argv, cwd=str(repo), check=True, capture_output=True)
+
+    untrusted = get_profile(repo, refresh=True)
+    assert "py_compile" in [c["label"] for c in untrusted["checks"]]
+
+    trust.grant(repo, build_profile(repo))
+    assert "py_compile" not in [c["label"] for c in get_profile(repo, refresh=True)["checks"]]

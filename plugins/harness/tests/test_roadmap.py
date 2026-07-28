@@ -88,3 +88,24 @@ def test_excluding_twice_adds_nothing(git_repo):
 
 def test_outside_a_repo_it_declines_quietly(tmp_path):
     assert local_ignore.ensure(tmp_path) == []
+
+
+def test_a_heading_inside_a_body_does_not_split_the_entry(tmp_path):
+    """Entries are delimited by `## `, so a body containing one would fragment
+    into several — burning slots against the cap and scattering the user's text."""
+    roadmap.append(tmp_path, "one entry", "- decided: x\n## Why\nBecause y.")
+
+    assert len(roadmap._entries(roadmap.read(tmp_path))) == 1
+    assert "Because y." in roadmap.read(tmp_path)
+
+
+def test_a_hand_edited_file_keeps_its_newest_entry(tmp_path):
+    """The file invites editing. Deleting the preamble used to silently eat the
+    entry that followed it."""
+    roadmap.append(tmp_path, "keep me", "- decided: important")
+    path = roadmap.roadmap_path(tmp_path)
+    path.write_text(path.read_text().split("\n## ", 1)[1].join(["## ", ""]), encoding="utf-8")
+
+    roadmap.append(tmp_path, "newer", "- decided: another")
+
+    assert "keep me" in roadmap.read(tmp_path)

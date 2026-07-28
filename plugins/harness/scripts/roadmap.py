@@ -60,7 +60,13 @@ def _entries(text: str) -> list[str]:
 def append(root: Path, title: str, body: str) -> Path:
     """Add one dated entry at the top and trim the tail."""
     existing = _entries(read(root))
-    entry = f"## {date.today().isoformat()} — {title.strip()}\n\n{body.strip()}\n"
+    import re
+
+    # Entries are delimited by a line starting `## `, so a heading inside a body
+    # would split one entry into several. Demote rather than reject: the body is
+    # the user's text and losing part of it is worse than changing its level.
+    safe = re.sub(r"^## ", "### ", body.strip(), flags=re.MULTILINE)
+    entry = f"## {date.today().isoformat()} — {title.strip()}\n\n{safe}\n"
     kept = [entry] + existing[: MAX_ENTRIES - 1]
 
     path = roadmap_path(root)

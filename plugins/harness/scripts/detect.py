@@ -528,8 +528,10 @@ def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:
     if not isinstance(override, dict):
         return
     if isinstance(disabled := override.get("disable"), list):
-        profile["checks"] = [c for c in profile["checks"] if c.get("kind") not in disabled]
-        profile["disabled_kinds"] = disabled
+        # Recorded rather than applied. Switching a check off is repo content
+        # acting on the harness, so it waits for trust like everything else —
+        # otherwise a clone can silently disarm every gate by shipping one file.
+        profile["disabled_kinds"] = [d for d in disabled if isinstance(d, str)]
     if isinstance(extra := override.get("checks"), list):
         # Verbatim except for provenance, which the repo does not get to claim.
         profile["checks"].extend({**c, "source": "repo"} for c in extra if isinstance(c, dict))
@@ -545,7 +547,10 @@ def _withhold_untrusted(root: Path, profile: dict[str, Any]) -> dict[str, Any]:
     """
     import trust
 
+    disabled = profile.get("disabled_kinds") or []
     if trust.is_trusted(root, profile):
+        if disabled:
+            profile["checks"] = [c for c in profile["checks"] if c.get("kind") not in disabled]
         profile["withheld_checks"] = []
         return profile
 
