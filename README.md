@@ -28,6 +28,7 @@ claude --plugin-dir ~/lam/harness/plugins/harness
 | Prompt submitted | Nudges toward `/harness:plan` when the request looks like implementation work |
 | Before an edit | Past 3 files or 100 lines with no agreed plan, asks — **once per session** |
 | After an edit | Format, lint, syntax and types on the touched file (~0.1–0.2s measured) |
+| A worker finishes | Re-checks every file that worker touched, and only those |
 | Turn ends | Full type-check, tests, build, and a scope check against the plan |
 | Session ends | Records real token cost to the ledger |
 
@@ -46,34 +47,46 @@ Hidden but model-invocable: `implement`, `crew`, `simplify`, `verify-tests`, and
 the six `lens-*` domain skills. Ask for them in plain language ("check whether
 these tests are real") and the model loads the right one.
 
-## Run your sessions on Sonnet
+## Which model runs what
 
-This is the one setting that matters, and it is counter-intuitive.
+One rule decides every model in the plugin:
 
-A skill's `model:` frontmatter **only takes effect when you type the slash
-command yourself.** When the model loads a skill mid-turn, the override is
-nominal — the work reverts to the session's model. Measured: a `model: haiku`
-skill driving five Bash calls from an Opus session billed Haiku 17 output tokens
-and Opus 633.
+> **Searching, comparing and pattern-matching are Sonnet work. Simulating an
+> execution nobody wrote down is Opus work.** And whichever component does the
+> high-volume work runs cheap, whatever else is true.
 
-Subagents are different: they run on their own declared model regardless of the
-parent. Measured: a Sonnet session spawning the Opus `architect` billed both,
-$0.075 and $0.146, in one turn.
+Subagents run on their own declared model regardless of the parent, so this holds
+however you have your own session set. Measured: a Sonnet session spawning the
+Opus `architect` billed both, $0.075 and $0.146, in one turn.
 
-So the split is built the only way that actually works — **cheap main thread,
-expensive agents.** Orchestration and editing (high volume, low judgement) run on
-your session model. Every judgement call is delegated to an agent pinned to Opus:
+| Agent | Model | Why |
+|---|---|---|
+| `architect` | opus/xhigh | A wrong patch-or-rewrite verdict costs days. Runs rarely |
+| `reviewer-correctness` | opus/xhigh | Must imagine inputs nobody wrote down |
+| `reviewer-security` | opus/high | Adversarial thinking, but narrow and conditional |
+| `reviewer-tests` | opus/high | "Would this fail if the code were wrong?" is simulation |
+| `refuter` | opus/high | Last gate. A weak one throws away good findings |
+| `reuse-auditor` | sonnet/high | Search and recall — CodeGraph walks the graph, not the model |
+| `reviewer-bloat` | sonnet/high | Duplication and one-caller abstractions are patterns |
+| `reviewer-perf` | sonnet/high | N+1s, missing indexes and blocking calls are structural |
+| `reviewer-docs` | sonnet/medium | Compare the diff against the docs. Mechanical |
+| `worker` | sonnet/medium | Executes a plan that was already agreed |
 
-| Runs on Opus, always | When |
-|---|---|
-| `architect` | Patch / refactor-first / rewrite / don't-build verdict |
-| `reuse-auditor` | Does this already exist? |
-| `reviewer-*` (6) | The review |
-| `refuter` | Kills weak findings before you see them |
+Every Sonnet agent has something checking it downstream: `reuse-auditor` feeds a
+plan you approve, the three Sonnet reviewers pass through the Opus `refuter`, and
+the worker is fenced by the plan and the per-edit gates. **Nothing on Sonnet makes
+a final call.**
 
-Set your session to Sonnet and leave it there. If you run on Opus instead, you
-pay Opus rates for the editing too — which is the cost problem this was built to
-fix.
+**Your own session** is the one dial left. If your session does the editing, run
+it on Sonnet — otherwise you pay Opus rates for the highest-volume work there is.
+If you fan out to `worker` subagents instead, the editing is already on Sonnet and
+the lead seat is free to be Opus.
+
+One trap worth knowing: a **skill's** `model:` frontmatter only takes effect when
+you type the slash command yourself. Loaded mid-turn, the override is nominal and
+the work reverts to the session's model. Measured: a `model: haiku` skill driving
+five Bash calls from an Opus session billed Haiku 17 output tokens and Opus 633.
+This is why model policy lives on agents, not skills.
 
 ## CodeGraph — indexed for you, on first use
 
@@ -99,7 +112,27 @@ writes a `.codegraph/` directory whose contents are self-ignored. It still leave
 one untracked entry, so either commit `.codegraph/.gitignore` or add
 `.codegraph/` to the repo's own `.gitignore`.
 
-## The two ideas it is built on
+## Building in parallel
+
+A plan whose Scope splits into slices that share no file is built by several
+`worker` subagents at once instead of one thread going file by file. Two rules
+make that safe — one enforced in code, one only instructed:
+
+- **Every writer accounts for itself** — *enforced.* Each worker records what it
+  changed in a file of its own, and readers merge. Before this, eight concurrent
+  writers left one file and a tenth of the line count in the session state — and
+  that state *is* the scope fence, so the end-of-turn gate would have reported
+  clean on seven unreviewed slices.
+- **A file belongs to exactly one worker** — *instructed, not enforced.* Two
+  workers editing one file lose code with no error and no conflict marker;
+  whoever saves last wins. `implement` and `worker.md` both say so plainly, and
+  nothing stops a worker that ignores them. Assign disjoint files in the plan.
+
+When a worker finishes, its own files are re-checked before it reports back. That
+catches what the per-edit gate cannot: a later edit breaking a file the same
+worker wrote earlier.
+
+## The three ideas it is built on
 
 **Never block on a problem the edit didn't cause.** A repo almost always carries
 some pre-existing lint noise or a type error nobody has got to. A gate that
@@ -112,6 +145,11 @@ reported. This is the single most important behaviour in the plugin.
 lens skills that auto-load by file path; jobs live in role agents that run in
 their own context. A role declares the lenses it needs, so a single reviewer can
 hold frontend, backend, database and Python at the same time.
+
+**A fresh context beats a smarter one, for reading.** Every role runs in a window
+spent entirely on its own question, and returns a conclusion rather than its
+reading. That is why delegation still pays when the agent is on a *cheaper* model
+than the session that called it.
 
 ## Configuring a repo
 
@@ -172,6 +210,20 @@ machinery, and is worth switching to if early access opens up on this account.
   directory (`~/.claude/plugins/data/harness*/gate.log`). Every hook records why
   it decided what it decided. This is how the skip-after-block bug was found: a
   gate that silently does nothing looks exactly like a gate that found nothing.
+- **Edits made through `Bash` are invisible to every gate.** The hooks match
+  `Edit|Write|MultiEdit|NotebookEdit`, so a change made with `sed -i` or a shell
+  redirect never enters `files_touched`, is never checked, and never reaches the
+  scope fence. Pre-existing, but it matters more now that `worker` subagents hold
+  `Bash` and run unattended.
+- **A repo's `.harness.json` can run arbitrary commands.** Its `checks` entries
+  are adopted verbatim, and `argv` goes straight to `subprocess`. Cloning an
+  untrusted repo and editing one file in it is enough. Read it before working in
+  a repo you did not write.
+- **`/harness:report` under-reports and double-counts.** It reads only the main
+  session transcript, so every subagent — including workers, where the editing now
+  happens — is invisible to it. It also appends one entry per `SessionEnd`, each a
+  full re-read, so a resumed session is summed several times. Read cost off the
+  usage meter instead until this is fixed.
 - **`plugin eval` is gated to early access**, so `evals/ab.py` stands in for it.
 - **Rust and Go support is written but untested** — neither toolchain is
   installed here. TypeScript and Python are verified against real repos.

@@ -3,7 +3,7 @@ name: review
 description: Review the current changes with the specialists the change actually needs, refuting each finding before reporting it. Use after implementing something and before treating it as done, or when asked to review a diff, a branch or recent work.
 argument-hint: "[optional focus, e.g. 'security' or a file path]"
 effort: xhigh
-allowed-tools: Bash, Read, Grep, Glob, Task
+allowed-tools: Bash, Read, Grep, Glob, Task, Skill
 ---
 
 # Review the change
@@ -56,7 +56,8 @@ user gave one.
 
 ## 5. Refute every finding before it reaches the user
 
-Send each finding to the `refuter` agent, in parallel. Only findings that survive
+Send each finding to the `harness:refuter` agent, in parallel. The `harness:`
+prefix is required — these agents ship inside a plugin and the bare name fails. Only findings that survive
 get reported.
 
 This step is not optional and it is not ceremony. A reviewer told to find

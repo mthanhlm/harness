@@ -219,10 +219,30 @@ def repo_key(root: Path) -> str:
 # ------------------------------------------------------------- session state
 
 
-def _session_path(session_id: str) -> Path:
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in session_id) or "unknown"
-    return sessions_dir() / f"{safe}.json"
+def _safe(name: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "unknown"
 
+
+def _session_path(session_id: str) -> Path:
+    return sessions_dir() / f"{_safe(session_id)}.json"
+
+
+def shards_dir(session_id: str) -> Path:
+    return sessions_dir() / f"{_safe(session_id)}.d"
+
+
+def shard_path(session_id: str, writer: str) -> Path:
+    """Where one writer records what it alone changed.
+
+    Writer ids come from a hook payload, so `_safe` is doing security work here
+    and not just tidiness: it is what stops an id containing `../` from writing
+    outside the sessions directory.
+    """
+    return shards_dir(session_id) / f"{_safe(writer)}.json"
+
+
+# Summed or unioned across writers. Everything else is one fact per session.
+ACCUMULATORS = ("files_touched", "lines_changed", "checks")
 
 DEFAULT_SESSION: dict[str, Any] = {
     "session_id": "",
@@ -236,21 +256,148 @@ DEFAULT_SESSION: dict[str, Any] = {
 }
 
 
+def writer_id(event: dict[str, Any]) -> str:
+    """Which writer a hook payload came from.
+
+    Every hook fired inside a subagent still carries the *main* session's
+    `session_id` — `agent_id` is the only field that tells them apart. Without
+    this, a worker's edits are indistinguishable from the main thread's and the
+    two overwrite each other.
+    """
+    raw = event.get("agent_id")
+    return raw if isinstance(raw, str) and raw.strip() else "main"
+
+
+def _blank_accumulators() -> dict[str, Any]:
+    return {"files_touched": [], "lines_changed": 0, "checks": {"run": 0, "failed": 0}}
+
+
+def _merge_shards(session_id: str) -> dict[str, Any] | None:
+    """Every writer's record, combined. None when no writer has recorded yet.
+
+    The None case matters during a plugin upgrade: a session that started under
+    the single-file layout has counters in the session file and no shards, and
+    returning zeros here would silently empty its scope fence.
+    """
+    shards = sorted(shards_dir(session_id).glob("*.json"))
+    if not shards:
+        return None
+
+    merged = _blank_accumulators()
+    files: set[str] = set()
+    for shard in shards:
+        stored = read_json(shard, default=None)
+        if not isinstance(stored, dict):
+            continue
+        files.update(stored.get("files_touched") or [])
+        merged["lines_changed"] += int(stored.get("lines_changed") or 0)
+        checks = stored.get("checks")
+        if isinstance(checks, dict):
+            for key in ("run", "failed"):
+                merged["checks"][key] += int(checks.get(key) or 0)
+    merged["files_touched"] = sorted(files)
+    return merged
+
+
 def load_session(session_id: str) -> dict[str, Any]:
     stored = read_json(_session_path(session_id), default=None)
     session = json.loads(json.dumps(DEFAULT_SESSION))
     if isinstance(stored, dict):
         session.update(stored)
+    merged = _merge_shards(session_id)
+    if merged is not None:
+        session.update(merged)
     session["session_id"] = session_id
     return session
 
 
-def save_session(session: dict[str, Any]) -> None:
-    write_json(_session_path(session.get("session_id", "unknown")), session)
+def _migrate_legacy(session_id: str) -> None:
+    """Move a pre-sharding session's counters into the `main` shard.
+
+    Without this, the first hook to open `session_state` after a plugin upgrade
+    writes an empty shard of its own. `_merge_shards` then stops returning None,
+    and the counters still sitting in the session file are replaced by zeros —
+    emptying the scope fence in the middle of a session, which is the failure
+    `_merge_shards` returns None to avoid in the first place.
+    """
+    if _merge_shards(session_id) is not None:
+        return
+    stored = read_json(_session_path(session_id), default=None)
+    if not isinstance(stored, dict):
+        return
+    legacy = {k: stored[k] for k in ACCUMULATORS if k in stored}
+    if legacy:
+        write_json(shard_path(session_id, "main"), legacy)
+
+
+def save_session(session: dict[str, Any], reset: bool = True) -> None:
+    """Write `session` as the whole truth, discarding every writer's record.
+
+    Only session start wants this. Anything running while workers exist must use
+    `session_state`, which adds a delta rather than overwriting what other
+    writers have recorded.
+
+    `reset=False` keeps the shards. A session that is resumed or compacted
+    part-way through a fan-out still has workers running, and deleting their
+    records destroys the per-worker attribution `SubagentStop` needs to check
+    the right files — leaving it to report that a worker wrote nothing.
+    """
+    session_id = session.get("session_id", "unknown")
+    write_json(_session_path(session_id), {k: v for k, v in session.items() if k not in ACCUMULATORS})
+    if not reset:
+        return
+
+    for stale in shards_dir(session_id).glob("*.json"):
+        stale.unlink(missing_ok=True)
+    write_json(
+        shard_path(session_id, "main"),
+        {k: session[k] for k in ACCUMULATORS if k in session},
+    )
 
 
 @contextmanager
-def session_state(session_id: str) -> Iterator[dict[str, Any]]:
+def session_state(session_id: str, writer: str = "main") -> Iterator[dict[str, Any]]:
+    """Yield the merged session for mutation, then record this writer's delta.
+
+    Parallel workers run this concurrently against one session. Writing the
+    mutated view straight back would let whoever saves last erase the rest — and
+    because `files_touched` is what the end-of-turn gate checks against the
+    plan's scope fence, an erased edit is an edit the scope check never sees and
+    the gate then reports clean.
+
+    So a writer records only what it added, in a file of its own, and readers
+    merge. Callers see the same dict they always did.
+    """
+    _migrate_legacy(session_id)
     session = load_session(session_id)
+    files_before = set(session.get("files_touched") or [])
+    lines_before = int(session.get("lines_changed") or 0)
+    checks_before = dict(session.get("checks") or {})
+    scalars_before = json.loads(
+        json.dumps({k: v for k, v in session.items() if k not in ACCUMULATORS})
+    )
+
     yield session
-    save_session(session)
+
+    stored = read_json(shard_path(session_id, writer), default=None)
+    own = stored if isinstance(stored, dict) else _blank_accumulators()
+
+    own["files_touched"] = sorted(
+        set(own.get("files_touched") or []) | (set(session.get("files_touched") or []) - files_before)
+    )
+    own["lines_changed"] = int(own.get("lines_changed") or 0) + (
+        int(session.get("lines_changed") or 0) - lines_before
+    )
+    own_checks = own.setdefault("checks", {"run": 0, "failed": 0})
+    checks_now = session.get("checks") or {}
+    for key in ("run", "failed"):
+        own_checks[key] = int(own_checks.get(key) or 0) + (
+            int(checks_now.get(key) or 0) - int(checks_before.get(key) or 0)
+        )
+    write_json(shard_path(session_id, writer), own)
+
+    # Per-session facts are only ever set from the main thread, so writing them
+    # unconditionally would let a worker put a stale copy back. Write on change.
+    scalars_now = {k: v for k, v in session.items() if k not in ACCUMULATORS}
+    if scalars_now != scalars_before:
+        write_json(_session_path(session_id), scalars_now)

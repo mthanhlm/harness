@@ -44,19 +44,17 @@ outage.
 inside a coroutine — `requests`, `time.sleep`, heavy CPU work — stalls the whole
 event loop, which is worse than not being async at all.
 
-## Tests that would fail if the code were wrong
+## pytest specifics
 
-This is the whole standard. Before writing an assertion, ask what change to the
-implementation would make it fail. If the honest answer is "nothing much", the
-test is decoration.
+Test design itself lives in `lens-testing`, which loads on test files — it is
+language-agnostic and this lens does not restate it. What is Python's own:
 
-- Assert on behaviour and returned values, not on internal call counts.
-- Mock what you do not own — the network, the clock, the filesystem. Mocking the
-  thing under test means testing the mock.
-- One reason to fail per test, so a failure names its own cause.
-- Cover the edges that actually break: empty, one, many, absent, malformed,
-  duplicate, and the error path — which is the one usually left untested.
 - `pytest.raises` needs `match=`, or it passes on the wrong exception.
+- `monkeypatch` over manual save-and-restore; it undoes itself when a test fails
+  part-way, which hand-rolled teardown does not.
+- `tmp_path` over a fixed temporary directory, or tests collide when run in
+  parallel.
+- Parametrise rather than looping inside a test, so each case fails by name.
 
 ## Before adding a module
 

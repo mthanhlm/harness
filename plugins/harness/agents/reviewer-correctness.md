@@ -5,6 +5,7 @@ model: opus
 effort: xhigh
 tools: Read, Grep, Glob, Bash
 skills:
+  - lens-typescript
   - lens-frontend
   - lens-backend
   - lens-database

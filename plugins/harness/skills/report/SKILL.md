@@ -11,8 +11,19 @@ allowed-tools: Bash, Read
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py"
 ```
 
-Present the numbers plainly. Cost comes from real token counts in each session's
-transcript, not an estimate — including the cache-read and cache-write split,
+Present the numbers plainly, **and say what they miss.** Cost comes from real
+token counts in each session's transcript rather than an estimate — but the
+ledger reads only the *main* transcript, so every subagent is invisible to it,
+including the workers where the building now happens. It also appends one entry
+per session end, each a fresh re-read, so a resumed session is counted several
+times over.
+
+So report the figure as a floor, not a total, and say which way it is wrong. A
+confident wrong number is worse than an honest range: the usage meter is the
+thing to trust until this is fixed. What the ledger *is* good for is the gate
+counts and the ratio between sessions, neither of which the meter shows.
+
+The split it does report — including the cache-read and cache-write split,
 which is usually where most of the money is.
 
 ## Reading it honestly
@@ -40,8 +51,8 @@ The ledger cannot answer that on its own, and it should not pretend to. What
 answers it is an A/B against the same cases:
 
 ```bash
-claude plugin eval "${CLAUDE_PLUGIN_ROOT}" --ablation with-without --model claude-sonnet-5
-claude plugin eval "${CLAUDE_PLUGIN_ROOT}" --ablation with-without --model claude-opus-5
+python3 "${CLAUDE_PLUGIN_ROOT}/evals/ab.py" --model claude-sonnet-5 --runs 3
+python3 "${CLAUDE_PLUGIN_ROOT}/evals/ab.py" --model claude-opus-5   --runs 3
 ```
 
 Each run scores the same cases with the plugin and without it. If Sonnet with

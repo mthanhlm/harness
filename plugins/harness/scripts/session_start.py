@@ -68,13 +68,17 @@ def main() -> int:
 
     session = load_session(event.get("session_id", "unknown"))
     session["repo_root"] = str(root)
-    # A resumed session keeps its counters; a fresh one starts clean.
-    if event.get("source") not in ("resume", "compact"):
+    # A resumed session keeps its counters; a fresh one starts clean. The same
+    # distinction decides whether each writer's record is cleared: a resume can
+    # land mid-fan-out, and wiping a running worker's record would leave its
+    # files unverified and its slice reported as empty.
+    fresh = event.get("source") not in ("resume", "compact")
+    if fresh:
         session["files_touched"] = []
         session["lines_changed"] = 0
         session["consecutive_stop_blocks"] = 0
         session["heavy_blocked"] = {}
-    save_session(session)
+    save_session(session, reset=fresh)
     trace("SessionStart", event.get("session_id", "?"), "bootstrapped",
           source=event.get("source"), agent=event.get("agent_type"))
 

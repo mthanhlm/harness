@@ -6,18 +6,30 @@ once — a paginated endpoint backed by a new query and rendered in a component 
 a database job, a backend job and a frontend job simultaneously. Picking one
 specialist for it loses two thirds of the review.
 
-Matching is mechanical rather than a judgement call, for two reasons: it is
-reproducible, and it can be shown to the user, who can then disagree with a
-concrete list instead of guessing what was considered.
+The split here is deliberate, and it took a wrong turn first.
 
-Files are the stronger signal and are matched first. The task description is
-used as a fallback so the crew can be assembled before anything has been written.
+**Paths are facts**, so they are matched mechanically: `db/schema.ts` is a
+database file whatever anyone thinks, and a mechanical answer is reproducible
+and can be shown to the user to disagree with.
+
+**What a task is about is judgement**, so this file does not attempt it. It used
+to, with a keyword list, and keyword lists cannot work: matching was by
+substring, so `ui` fired inside "b*ui*ld", `api` inside "c*api*tal", and `auth`
+inside "*auth*or". Tightening to whole words only narrows the guess — the real
+problem is that a fixed vocabulary can never cover how people phrase things, and
+at plan time, when nothing has changed yet, that guess carries the entire
+selection.
+
+So the catalogue of lenses goes out with the report and whoever reads it picks
+the ones the job needs. That is the same basis Claude Code already loads skills
+on, rather than a second, worse mechanism competing with it.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,30 +74,39 @@ def changed_files(root: Path) -> list[str]:
     return sorted(set(files))
 
 
-def select_lenses(files: list[str], task: str) -> list[dict[str, Any]]:
-    reg = registry()
-    lowered = task.lower()
+def select_lenses(files: list[str]) -> list[dict[str, Any]]:
+    """The lenses the changed files put beyond argument."""
     selected = []
-    for lens in reg["lenses"]:
-        by_path = [f for f in files if any(_matches_path(p, f) for p in lens["paths"])]
-        by_word = [k for k in lens["keywords"] if k in lowered]
-        if by_path or by_word:
+    for lens in registry()["lenses"]:
+        matched = [f for f in files if any(_matches_path(p, f) for p in lens["paths"])]
+        if matched:
             selected.append(
                 {
                     "name": lens["name"],
                     "domain": lens["domain"],
-                    "because": (
-                        f"{len(by_path)} matching file(s), e.g. {by_path[0]}"
-                        if by_path
-                        else f"task mentions {', '.join(by_word[:3])}"
-                    ),
+                    "because": f"{len(matched)} matching file(s), e.g. {matched[0]}",
                 }
             )
     return selected
 
 
+def lens_catalogue() -> list[dict[str, str]]:
+    """Every lens and what it covers, for whoever is judging the task itself."""
+    return [{"name": l["name"], "domain": l["domain"]} for l in registry()["lenses"]]
+
+
+# Agents ship inside a plugin, so the Task tool addresses them by a scoped name.
+# The registry stores the bare name; passing that straight to `subagent_type`
+# fails with an unknown-agent error, which reads like the model not bothering.
+AGENT_PREFIX = "harness:"
+
+
 def select_roles(phase: str) -> list[dict[str, Any]]:
-    return [r for r in registry()["roles"] if r["phase"] == phase]
+    return [
+        {**role, "subagent_type": f"{AGENT_PREFIX}{role['name']}"}
+        for role in registry()["roles"]
+        if role["phase"] == phase
+    ]
 
 
 def main() -> int:
@@ -96,12 +117,13 @@ def main() -> int:
 
     root = repo_root()
     files = changed_files(root)
-    lenses = select_lenses(files, task)
     roles = select_roles(phase)
 
     report = {
+        "task": task,
         "changed_files": files,
-        "lenses": lenses,
+        "lenses_from_files": select_lenses(files),
+        "lens_catalogue": lens_catalogue(),
         "roles_always": [r for r in roles if r.get("always")],
         "roles_conditional": [r for r in roles if not r.get("always")],
     }

@@ -3,7 +3,7 @@ name: implement
 description: Build what an approved plan describes. Loaded by the plan skill once you have approved it; also usable when a task is already specified precisely enough that the work is mechanical rather than a judgement call.
 argument-hint: "[optional note, e.g. 'start with the failing test']"
 effort: high
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, TodoWrite
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash, TodoWrite, Task
 user-invocable: false
 ---
 
@@ -11,14 +11,15 @@ user-invocable: false
 
 Note: **$ARGUMENTS**
 
-This is the high-volume, low-judgement half of the work, and it runs on the
-session's model — the cheap one. The expensive judgement is already done and
-written down: whether this is worth building, where it goes, what already exists,
-what proves it works.
+This is the high-volume, low-judgement half of the work. The expensive judgement
+is already done and written down: whether this is worth building, where it goes,
+what already exists, what proves it works.
 
 The bet is specific: **cheap models fail on underspecified work, not on hard
 work.** The plan removes the underspecification, and the harness's checks catch
-the mistakes. If both hold, this costs a fraction of doing it on the dear model.
+the mistakes. So the building belongs on a cheap model — either your own session
+if it is already cheap, or `worker` subagents pinned to Sonnet, which are cheap
+whatever you are running on.
 
 ## 1. Read the plan first
 
@@ -41,9 +42,41 @@ expect. A test written after the implementation tends to assert what the code
 does rather than what it should do — and a test you never watched fail is a test
 you have no evidence works.
 
-## 3. Build only what is in scope
+## 3. Split the work, or decide not to
 
-Work through the plan's file list. For each one:
+The plan's Scope section assigns files to workers. Fan out when there are **three
+or more files whose slices share no file between them**, and each slice is real
+work rather than a one-line edit. Below that, launching workers costs more in
+coordination than it saves in wall-clock, and a single thread is faster.
+
+Before launching, check the split for overlap. **Two workers editing one file
+lose code silently** — no error, no conflict marker, whoever writes last wins.
+If the plan's assignment overlaps, do not paper over it: say so and fix the
+assignment first.
+
+Launch every worker in a **single message** so they run at once, and **pass
+`run_in_background: false`** — agents background themselves by default, which
+would leave you waiting on notifications instead of collecting results.
+
+Give each worker a brief it can act on without asking anything, because it cannot
+ask:
+
+- the goal, in one or two lines, so it can tell a good change from a literal one
+- **the exact files it owns**, and that it must not edit any other
+- what the plan said to reuse, by name and path
+- the verification command, so it knows what "done" looks like
+
+Then wait. Do not start editing files yourself while workers are running — the
+plan assigned those files to them, and you are now a writer nobody accounted for.
+
+When they return, read what each one says it did **not** finish. That list is the
+real state of the work; a worker that hit something it could not resolve reports
+it rather than failing loudly.
+
+## 4. Build only what is in scope
+
+Work through whatever you did not delegate — the whole file list if you decided
+against fanning out. For each file:
 
 - **Reuse what the plan says to reuse.** It was chosen after a search; do not
   re-litigate it by writing a fresh helper because that felt faster.
@@ -59,7 +92,7 @@ Do not add error handling for cases that cannot occur, options nobody asked for,
 or abstractions with one caller. The plan's line estimate is the signal: if
 you are running at double it, stop and say why before continuing.
 
-## 4. Let the checks do their job
+## 5. Let the checks do their job
 
 After each edit the harness checks the file you touched, and blocks if the edit
 introduced a problem. When that happens, fix exactly what it reports. It has
@@ -70,7 +103,7 @@ At the end of the turn it runs the project's tests and build. Then run the
 plan's verification command yourself and paste the result. "It should work"
 is not a result.
 
-## 5. Know when to hand back
+## 6. Know when to hand back
 
 Escalate rather than grind. Say plainly that you are handing back, and why, when:
 
@@ -84,7 +117,7 @@ converge is not cheaper than having asked, and it is exactly the token waste thi
 plugin was built to remove. The next turn returns to your session's normal model,
 so `/harness:plan` or a plain question picks up where you left off.
 
-## 6. Report
+## 7. Report
 
 State what changed, the verification command you ran and its output, and anything
 you noticed but deliberately left alone because it was out of scope. That last

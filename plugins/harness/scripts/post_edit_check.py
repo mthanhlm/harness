@@ -25,7 +25,16 @@ from pathlib import Path
 
 from detect import checks_for_file, get_profile
 from runner import run_file_check, trim
-from state import emit, gates_disabled, guard, read_event, repo_root, session_state, trace
+from state import (
+    emit,
+    gates_disabled,
+    guard,
+    read_event,
+    repo_root,
+    session_state,
+    trace,
+    writer_id,
+)
 
 # Tool names whose input carries a file path we should check.
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
@@ -98,7 +107,7 @@ def main() -> int:
     failures = [r for r in results if r.blocking]
     advisories = [r for r in results if not r.ok and not r.blocking and not r.skipped]
 
-    with session_state(event.get("session_id", "unknown")) as session:
+    with session_state(event.get("session_id", "unknown"), writer_id(event)) as session:
         touched = set(session.get("files_touched") or [])
         touched.add(str(target))
         session["files_touched"] = sorted(touched)

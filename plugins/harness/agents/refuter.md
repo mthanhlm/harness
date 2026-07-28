@@ -2,7 +2,7 @@
 name: refuter
 description: Tries to disprove a review finding before it reaches the user. Use on each finding produced by a reviewer, especially ones that would cause code to be rewritten or defensive handling to be added.
 model: opus
-effort: xhigh
+effort: high
 tools: Read, Grep, Glob, Bash
 ---
 

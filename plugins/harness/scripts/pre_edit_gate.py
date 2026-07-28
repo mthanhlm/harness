@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 import contract as contract_mod
-from state import emit, gates_disabled, guard, read_event, session_state
+from state import emit, gates_disabled, guard, read_event, session_state, writer_id
 
 # Below both of these, a change is small enough that stopping to agree a
 # contract costs more than it saves.
@@ -60,6 +60,11 @@ def main() -> int:
         return 0
     target = _target(event)
     if target is None:
+        return 0
+    if writer_id(event) != "main":
+        # A worker is executing a plan that was already approved, and cannot
+        # answer a question meant for the user anyway: `ask` inside a subagent
+        # surfaces in the lead's session with no context to decide from.
         return 0
 
     session_id = event.get("session_id", "unknown")

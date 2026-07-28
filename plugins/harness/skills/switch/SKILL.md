@@ -28,6 +28,12 @@ Report the result plainly: which gates are active, and where state lives.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/switch.py" off
 ```
 
+**This is global and it does not expire.** The marker is one file in the plugin's
+own data directory, not something per repository — so switching off because one
+project is being obstructive silently disables the harness in every other project
+too, until someone turns it back on. Say so at the time; a user who does not know
+this discovers it weeks later as "the harness stopped working".
+
 Every hook exits immediately after this. Tell the user the harness is off and that
 `/harness:switch on` restores it. Do not lecture them about turning it back on.
 

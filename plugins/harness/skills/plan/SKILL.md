@@ -21,19 +21,27 @@ specification is the failure to avoid here, not the safe option.
 
 ## Where the expensive thinking happens
 
-Your own reasoning runs on the session's model, which is the cheaper one. That is
-deliberate: orchestration and editing are high-volume, low-judgement work.
+Judgement is delegated to subagents, and the reason holds whatever model you are
+running on: **each one reads in a context of its own and returns a conclusion.**
+Your context is already full of this conversation, which is exactly what makes it
+a poor place to search a codebase or read a diff cold. Theirs is empty and spent
+entirely on the question.
 
-The judgement is delegated to subagents that run on a stronger model regardless of
-yours. **Use them — do not substitute your own opinion for theirs**, because
-yours is the cheaper one:
+Some of them also run on a stronger model than yours, and some deliberately run
+on a cheaper one — searching and comparing do not need what simulating an
+execution needs. Either way, **use them rather than substituting your own
+opinion**:
 
 | Subagent | For |
 |---|---|
-| `reuse-auditor` | Does this already exist? Run it before planning any new code. |
-| `architect` | Is this code worth building on — patch, refactor-first, rewrite, or don't build? |
-| `reviewer-*` | The review at the end. |
-| `refuter` | Kills weak findings before they reach the user. |
+| `harness:reuse-auditor` | Does this already exist? Run it before planning any new code. |
+| `harness:architect` | Is this code worth building on — patch, refactor-first, rewrite, or don't build? |
+| `harness:reviewer-*` | The review at the end. |
+| `harness:refuter` | Kills weak findings before they reach the user. |
+
+**The `harness:` prefix is required.** These agents ship inside a plugin, so the
+Task tool addresses them by a scoped name. `architect` alone fails with an
+unknown-agent error.
 
 Launch independent ones in a **single message** so they run concurrently, and
 **wait for them — pass `run_in_background: false`.** Subagents run in the
@@ -64,12 +72,48 @@ codegraph explore "<the capability in question>"
 If it reported that CodeGraph is unavailable, fall back to Grep and Glob against
 the vocabulary the codebase would plausibly use.
 
-**Ask only when you genuinely cannot resolve something.** Read the code first;
-most ambiguity dissolves once you have. Use `AskUserQuestion` when two readings
-would lead to materially different work — a real fork, not a detail you could
-reasonably decide and state. Keep it to one round, folded into the approval
-question in Stage 3 where possible. Ceremony on a clear request is how a process
-gets resented and then bypassed.
+**Interview them, until nothing material is unresolved.** A requirement is
+written by whoever has the problem, not by whoever knows the system, so it is
+normally incomplete — and the person you are working with has said outright that
+they cannot tell what they left out. Waiting for them to notice is not a plan.
+
+**Read the code first.** This is a precondition, not a preference: it is what
+stops the first round being twelve questions the codebase already answers.
+
+Then ask in rounds, with these four bounds:
+
+- **A question qualifies only if two answers would change the Scope file list,
+  the Data flow, or the User flow.** Anything smaller, decide yourself and write
+  it down. This is the whole test — "it would be good to know" is not one.
+- **Up to four questions per round**, since `AskUserQuestion` takes four. One at
+  a time is what turns an interview into an interrogation.
+- **Every round offers "use your judgement for the rest"**, which ends the
+  interview immediately and moves everything outstanding to *What you did not
+  say*. They must always be able to stop without knowing anything.
+- **Stop at three rounds**, or sooner when a round changes nothing in the draft.
+  A fourth round means you are asking the code's questions, not theirs.
+
+Two failure modes to avoid, in both directions. Asking a non-engineer something
+they cannot have an opinion on — "write-through or write-behind?" — is worse than
+deciding it yourself, because an arbitrary answer launders a guess into a
+requirement and removes it from the list they could have reviewed. And if a round
+returns nothing at all (a headless run has nobody to answer), treat every open
+question as answered by your recommendation, record them all, and proceed.
+
+The interview closes before the plan is presented. Stage 3 is approval, not
+another round.
+
+**But write down every gap, whether or not you ask about it.** The person you are
+working with has said they do not always know what a requirement is missing, and
+that is the normal case rather than a failing — a requirement is written by
+whoever has the problem, not by whoever knows the system. So as you read, keep a
+list of what the request did not say: the case it does not cover, the existing
+behaviour it would change without mentioning it, the thing it implies but never
+states. Each one goes in the plan's **What you did not say** section with the
+assumption you made and what changes if that assumption is wrong.
+
+Not asking is fine. Deciding silently is not — a decision the user never saw is
+one they cannot correct, and they only find out when the built thing is wrong.
 
 ## Stage 2 — Draft the whole picture
 
@@ -103,6 +147,23 @@ third-party services. One line each.>
 ## Scope
 Files this will change:
 - path/to/file.ts — what changes in it
+<**This list is parsed by the end-of-turn gate, and anything it cannot read is
+not protected.** One literal repo-relative path per bullet, with its extension,
+as the first thing after the dash. No globs (`agents/*.md`), no braces
+(`skills/{a,b}/SKILL.md`), no two paths on one line — each of those silently
+parses to nothing, and a file left out of the fence can be rewritten with the
+gate still reporting clean. If that makes the list long, the list is long.>
+
+Also name the failing test's own file here. The build is told to write it first,
+and the fence will otherwise flag it as an unagreed change.
+
+Slices (only when three or more files can be built at once):
+- worker 1 — path/to/a.ts, path/to/b.ts
+- worker 2 — path/to/c.ts
+<Every file appears under exactly one worker. Two workers sharing a file lose
+code silently, with no error and no conflict marker. If the work cannot be cut
+that way, say so and leave this out — serial is the correct answer more often
+than not.>
 
 Explicitly NOT changing:
 - <the neighbouring things that will look tempting mid-task>
@@ -113,6 +174,14 @@ Explicitly NOT changing:
 
 ## Verdict
 <Which of the four, and why — from the architect subagent. Two or three sentences.>
+
+## What you did not say
+<Every gap in the requirement, with the assumption made and what changes if it
+is wrong. One line each. This is not a list of your doubts — it is the list of
+decisions the user never got to make. Write "Nothing material." only when that
+is true after reading the code, which is rarer than it feels.>
+
+- <the gap> → assumed <X>; if it should be <Y> instead, <what changes>
 
 ## Disagreement
 <Where the request is wrong and what you would do instead — or "None.">
@@ -139,8 +208,12 @@ to skim, which is exactly when the real one gets missed.
 
 ## Stage 3 — Get approval, and actually stop
 
-Present the goal, the user flow, the data flow, the verdict and the budget. Then
-`AskUserQuestion` with real choices, your recommendation first:
+Present the goal, the user flow, the data flow, the verdict and the budget —
+and **read out "What you did not say"**. That section is the one the user cannot
+supply themselves, because it is a list of things they did not know to mention.
+Two lines of it are worth more than a paragraph restating what they asked for.
+
+Then `AskUserQuestion` with real choices, your recommendation first:
 
 - proceed as planned
 - proceed with your recommendation instead (when you disagreed)

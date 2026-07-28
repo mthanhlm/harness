@@ -1,10 +1,11 @@
 ---
 name: reviewer-bloat
 description: Finds code that does not earn its place — duplicated capability, speculative abstraction, unnecessary options, dead paths and comments that restate the code. Use after implementing a change, and whenever a diff is larger than the task warranted.
-model: opus
-effort: xhigh
+model: sonnet
+effort: high
 tools: Read, Grep, Glob, Bash
 skills:
+  - lens-typescript
   - lens-frontend
   - lens-backend
   - lens-python

@@ -1,7 +1,7 @@
 ---
 name: reviewer-perf
 description: Finds work that will not scale — repeated queries, accidental quadratic loops, unbounded memory, missing indexes and blocking calls on hot paths. Use on changes touching loops over user data, database access, rendering lists or request handling.
-model: opus
+model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash
 skills:

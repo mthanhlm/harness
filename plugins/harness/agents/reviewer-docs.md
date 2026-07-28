@@ -2,7 +2,7 @@
 name: reviewer-docs
 description: Finds documentation and comments that a change has made wrong — stale READMEs, outdated docstrings, examples that no longer run, and comments that restate or contradict the code. Use after any change to public behaviour, setup steps, configuration or function signatures.
 model: sonnet
-effort: high
+effort: medium
 tools: Read, Grep, Glob, Bash
 ---
 

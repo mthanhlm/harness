@@ -3,38 +3,112 @@
     {
       "name": "lens-frontend",
       "domain": "web frontend",
-      "paths": ["**/*.tsx", "**/*.jsx", "**/*.css", "**/*.scss", "components/**"],
-      "keywords": ["component", "ui", "page", "render", "css", "style", "form", "button", "layout", "client", "accessib"]
+      "paths": [
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.css",
+        "**/*.scss",
+        "components/**"
+      ]
     },
     {
       "name": "lens-backend",
       "domain": "API and services",
-      "paths": ["api/**", "app/api/**", "routes/**", "server/**", "**/route.ts", "**/handlers/**", "**/*_api.py"],
-      "keywords": ["endpoint", "api", "route", "handler", "request", "response", "auth", "session", "webhook", "middleware"]
+      "paths": [
+        "api/**",
+        "app/api/**",
+        "routes/**",
+        "server/**",
+        "**/route.ts",
+        "**/handlers/**",
+        "**/*_api.py"
+      ]
     },
     {
       "name": "lens-database",
       "domain": "schema and queries",
-      "paths": ["db/**", "drizzle/**", "migrations/**", "**/*.sql", "**/schema.ts", "**/drizzle.config.ts"],
-      "keywords": ["schema", "migration", "table", "column", "query", "index", "drizzle", "sql", "database", "transaction"]
+      "paths": [
+        "db/**",
+        "drizzle/**",
+        "migrations/**",
+        "**/*.sql",
+        "**/schema.ts",
+        "**/drizzle.config.ts"
+      ]
     },
     {
       "name": "lens-python",
       "domain": "Python",
-      "paths": ["**/*.py", "**/*.pyi", "pytest.ini", "conftest.py"],
-      "keywords": ["python", "pytest", "async", "dataclass", "streamlit", "pipeline"]
+      "paths": [
+        "**/*.py",
+        "**/*.pyi",
+        "pytest.ini",
+        "conftest.py",
+        "pyproject.toml"
+      ]
+    },
+    {
+      "name": "lens-typescript",
+      "domain": "TypeScript",
+      "paths": [
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.mts",
+        "**/*.cts",
+        "tsconfig.json"
+      ]
+    },
+    {
+      "name": "lens-testing",
+      "domain": "test design",
+      "paths": [
+        "**/tests/**",
+        "**/__tests__/**",
+        "**/test_*.py",
+        "**/*_test.py",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "conftest.py"
+      ]
+    },
+    {
+      "name": "lens-security",
+      "domain": "security",
+      "paths": [
+        "**/auth/**",
+        "**/*auth*.ts",
+        "**/*auth*.py",
+        "**/middleware/**",
+        "**/.env*"
+      ]
     },
     {
       "name": "lens-llm-agents",
       "domain": "LLM and agent systems",
-      "paths": ["**/prompts/**", "**/agents/**", "**/skills/**", "**/*SKILL.md", "**/evals/**", "**/*agent*.py", "**/*agent*.ts"],
-      "keywords": ["prompt", "agent", "llm", "model", "tool", "eval", "context", "token", "claude", "anthropic"]
+      "paths": [
+        "**/prompts/**",
+        "**/agents/**",
+        "**/skills/**",
+        "**/*SKILL.md",
+        "**/evals/**",
+        "**/*agent*.py",
+        "**/*agent*.ts"
+      ]
     },
     {
       "name": "lens-infra",
       "domain": "config, CI and shell",
-      "paths": ["**/Dockerfile*", "**/docker-compose*.yml", ".github/**", "**/*.sh", "**/*.bash", "**/.env*", "**/*.tf", "Makefile"],
-      "keywords": ["docker", "ci", "workflow", "deploy", "env", "secret", "pipeline", "container", "shell", "script"]
+      "paths": [
+        "**/Dockerfile*",
+        "**/docker-compose*.yml",
+        ".github/**",
+        "**/*.sh",
+        "**/*.bash",
+        "**/.env*",
+        "**/*.tf",
+        "Makefile"
+      ]
     }
   ],
   "roles": [
