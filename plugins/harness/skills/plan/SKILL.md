@@ -61,6 +61,22 @@ fresh clone has none even with CodeGraph installed globally:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
 ```
 
+Check whether this repo's own checks are actually running:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" status
+```
+
+If commands are withheld, the plan's **Verification** section is about to promise
+something the end-of-turn gate cannot deliver — `npm test` named as the proof
+will not run. Say so while planning, not afterwards, and either recommend
+`/harness:trust` or pick a verification command that does not depend on the
+withheld ones.
+
+**Do not approve them on the user's behalf.** Running a stranger's commands is
+their decision, and a plan skill quietly granting it would defeat the point of
+asking. Noticing is your job; approving is theirs.
+
 Read what this project already decided, before deciding anything:
 
 ```bash
