@@ -99,6 +99,24 @@ def test_the_summary_counts_delegated_spend(tmp_path):
     assert f"${usage['total_cost_usd']:.2f} total" in summary
 
 
+def test_a_rebuilt_entry_does_not_report_zero_checks_as_a_measurement():
+    """`or 0` turned "never recorded" into "ran, found nothing".
+
+    A plugin reinstall deleted the ledger; cost was rebuilt from transcripts,
+    but gate counts come from hook execution and could not be. Reporting those
+    as `0 run` is the confident wrong number this file's own skill forbids.
+    """
+    rebuilt = {"usage": {"cost_usd": 1.0, "total_cost_usd": 1.0}, "checks_run": None}
+    measured = {"usage": {"cost_usd": 1.0, "total_cost_usd": 1.0}, "checks_run": 4,
+                "checks_failed": 1, "contract": True}
+
+    summary = ledger.summarize([rebuilt, measured])
+
+    assert "4 run, 1 caught" in summary
+    assert "of 1 sessions" in summary, "the denominator must exclude unmeasured rows"
+    assert "unknown for 1 session" in summary
+
+
 def test_an_entry_written_before_subagents_were_counted_still_reads():
     """Old rows have no `total_cost_usd`; reporting them as free would be worse
     than reporting them as incomplete."""

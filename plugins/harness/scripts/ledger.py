@@ -228,10 +228,16 @@ def summarize(entries: list[dict[str, Any]]) -> str:
             for model, stats in models.items():
                 per_model[model] = per_model.get(model, 0.0) + float(stats.get("cost_usd") or 0)
 
-    checks_run = sum(int(e.get("checks_run") or 0) for e in entries)
-    checks_failed = sum(int(e.get("checks_failed") or 0) for e in entries)
+    # Gate counts come from hook execution, so an entry rebuilt from a
+    # transcript has none — and `or 0` would report "0 checks run" as a
+    # measurement rather than an absence. Those rows are counted separately and
+    # excluded from the denominator instead.
+    measured = [e for e in entries if e.get("checks_run") is not None]
+    unmeasured = len(entries) - len(measured)
+    checks_run = sum(int(e.get("checks_run") or 0) for e in measured)
+    checks_failed = sum(int(e.get("checks_failed") or 0) for e in measured)
     lines = sum(int(e.get("lines_changed") or 0) for e in entries)
-    contracts = sum(1 for e in entries if e.get("contract"))
+    contracts = sum(1 for e in measured if e.get("contract"))
 
     out = [
         f"{len(entries)} sessions, ~{lines} lines changed, ${total_cost:.2f} total",
@@ -246,9 +252,17 @@ def summarize(entries: list[dict[str, Any]]) -> str:
         "",
         f"Lead session: ${lead_cost:8.2f}   delegated to subagents: ${delegated_cost:8.2f}",
         "",
-        f"Per-edit checks: {checks_run} run, {checks_failed} caught a problem the edit introduced",
-        f"Contracts agreed before coding: {contracts} of {len(entries)} sessions",
     ]
+    if measured:
+        out += [
+            f"Per-edit checks: {checks_run} run, {checks_failed} caught a problem the edit introduced",
+            f"Contracts agreed before coding: {contracts} of {len(measured)} sessions",
+        ]
+    if unmeasured:
+        out.append(
+            f"Gate counts unknown for {unmeasured} session(s) rebuilt from transcripts —"
+            " cost is real, the check figures were never recorded."
+        )
     if checks_run:
         rate = checks_failed / checks_run * 100
         out.append(
