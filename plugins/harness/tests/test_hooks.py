@@ -162,6 +162,30 @@ def test_a_markdown_edit_is_recorded_even_though_nothing_checks_it(
     assert "notes.md" in [Path(f).name for f in session["files_touched"]]
 
 
+def test_an_edit_outside_the_repository_is_not_part_of_the_change(
+    data_dir, git_repo, hook_env, tmp_path
+):
+    """`/harness:plan` writes its contract outside the repo, every time.
+
+    Once every edit was recorded rather than only checked ones, that put a file
+    in `files_touched` that no contract could list — and the scope fence
+    promptly accused the contract of not listing itself. Anything reading
+    `files_touched` means files in this repository.
+    """
+    outside = tmp_path / "elsewhere.py"
+    outside.write_text("value = 1\n", encoding="utf-8")
+    event = {
+        "session_id": "sess",
+        "cwd": str(git_repo),
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(outside), "new_string": "value = 2\n"},
+    }
+
+    run_hook("post_edit_check.py", event, hook_env, git_repo)
+
+    assert not load_session("sess").get("files_touched")
+
+
 def test_a_worker_may_rewrite_its_own_file(data_dir, git_repo, hook_env):
     """Editing a file twice is ordinary work, not a collision."""
     run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo)

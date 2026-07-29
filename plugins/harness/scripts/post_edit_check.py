@@ -53,6 +53,30 @@ def _target_path(event: dict) -> Path | None:
     return path if path.is_file() else None
 
 
+def _inside(root: Path, target: Path) -> bool:
+    """Whether an edit belongs to the change under review.
+
+    `files_touched` means "files in this repository", and everything that reads
+    it assumes so: the scope fence accuses anything the contract did not list,
+    the end-of-turn gate decides whether the turn changed anything, and the
+    ledger counts it.
+
+    The plan itself is the case that proves it. `/harness:plan` writes its
+    contract to the plugin's data directory, so once every edit was recorded
+    rather than only checked ones, writing the plan put a file in
+    `files_touched` that no contract could ever list — and the fence flagged the
+    contract for not listing itself.
+
+    Compared without resolving, matching `_out_of_scope`: resolution would
+    disagree with the recorded path on a symlinked tree.
+    """
+    try:
+        target.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _edit_size(event: dict) -> int:
     """Rough count of lines this edit touched, for the diff budget."""
     tool_input = event.get("tool_input")
@@ -106,10 +130,11 @@ def main() -> int:
     advisories = [r for r in results if not r.ok and not r.blocking and not r.skipped]
 
     with session_state(event.get("session_id", "unknown"), writer_id(event)) as session:
-        touched = set(session.get("files_touched") or [])
-        touched.add(str(target))
-        session["files_touched"] = sorted(touched)
-        session["lines_changed"] = int(session.get("lines_changed") or 0) + _edit_size(event)
+        if _inside(root, target):
+            touched = set(session.get("files_touched") or [])
+            touched.add(str(target))
+            session["files_touched"] = sorted(touched)
+            session["lines_changed"] = int(session.get("lines_changed") or 0) + _edit_size(event)
         checks_stat = session.setdefault("checks", {"run": 0, "failed": 0})
         checks_stat["run"] = int(checks_stat.get("run", 0)) + len(results)
         checks_stat["failed"] = int(checks_stat.get("failed", 0)) + len(failures)
