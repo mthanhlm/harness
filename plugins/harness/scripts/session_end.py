@@ -63,21 +63,29 @@ def _not_changing(text: str) -> list[str]:
     the next session would otherwise rediscover.
     """
     scope = _section(text, "Scope")
-    # Anchored to the start of a line. An unanchored search matches the phrase
-    # wherever a plan happens to *mention* the section — a bullet reading
-    # `derive it from "Explicitly NOT changing"` cut the list at that bullet and
-    # silently took the remaining agreed files with it.
-    cutoff = re.search(
-        r"^\s*(?:\*\*)?Explicitly\s+NOT\s+chang\w*", scope, re.MULTILINE | re.IGNORECASE
-    )
+    # The same pattern the scope fence cuts on, imported rather than restated.
+    # It was written out twice, and the second copy is exactly how a fix lands
+    # in one parser and not the other — which is the bug that produced it.
+    cutoff = contract_mod._NOT_CHANGING_RE.search(scope)
     if not cutoff:
         return []
-    bullets = []
+
+    # Bullets are joined across continuation lines before being returned.
+    # Contracts are hard-wrapped at about eighty columns, so reading one
+    # physical line per bullet cut ten of twenty-seven real entries mid-clause —
+    # `- deferred: detect.py —` tells the next session nothing, which is the
+    # only thing this file exists to prevent.
+    bullets: list[list[str]] = []
     for line in scope[cutoff.end():].splitlines():
         stripped = line.strip()
         if stripped.startswith("- "):
-            bullets.append(stripped[2:].strip())
-    return [b for b in bullets if b][:MAX_DEFERRED]
+            bullets.append([stripped[2:].strip()])
+        elif stripped and bullets:
+            bullets[-1].append(stripped)
+        elif not stripped:
+            continue
+    joined = [" ".join(" ".join(parts).split()) for parts in bullets]
+    return [b for b in joined if b][:MAX_DEFERRED]
 
 
 def entry_for(agreed: contract_mod.Contract) -> tuple[str, str] | None:

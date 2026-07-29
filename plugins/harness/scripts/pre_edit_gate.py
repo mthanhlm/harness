@@ -48,24 +48,12 @@ def _target(event: dict) -> str | None:
     return raw if isinstance(raw, str) and raw.strip() else None
 
 
-def _ask(reason: str) -> None:
+def _respond(decision: str, reason: str) -> None:
     emit(
         {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "ask",
-                "permissionDecisionReason": reason,
-            }
-        }
-    )
-
-
-def _deny(reason: str) -> None:
-    emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
+                "permissionDecision": decision,
                 "permissionDecisionReason": reason,
             }
         }
@@ -116,7 +104,8 @@ def main() -> int:
         # thing it is stopped for is writing over another worker.
         holder = _other_worker_holding(session_id, writer, target)
         if holder:
-            _deny(
+            _respond(
+                "deny",
                 f"{Path(target).name} has already been written by {holder}, which owns a"
                 " different slice of this plan. Two workers editing one file lose code"
                 " silently — whoever writes last wins. Report this file as one you could"
@@ -144,13 +133,15 @@ def main() -> int:
         session["edit_gate_prompted"] = True
 
     if existing and not existing.approved:
-        _ask(
+        _respond(
+            "ask",
             "A contract was written for this session but has not been approved yet."
-            " Approving here also approves the plan it describes."
+            " Approving here also approves the plan it describes.",
         )
         return 0
 
-    _ask(
+    _respond(
+        "ask",
         f"This session has now changed {len(projected)} files and about {lines} lines,"
         " which is past the point where the harness expects an agreed contract."
         " Allow to continue without one, or deny and ask for /harness:plan first."

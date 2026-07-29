@@ -294,11 +294,11 @@ machinery, and is worth switching to if early access opens up on this account.
   gate — but not the per-edit check, which needs a file path the shell does not
   provide. A shell edit is caught at the end of the turn rather than the moment it
   is made.
-- **`/harness:report` under-reports and double-counts.** It reads only the main
-  session transcript, so every subagent — including workers, where the editing now
-  happens — is invisible to it. It also appends one entry per `SessionEnd`, each a
-  full re-read, so a resumed session is summed several times. Read cost off the
-  usage meter instead until this is fixed.
+- **`/harness:report` double-counts a resumed session.** It appends one entry per
+  `SessionEnd`, each a full re-read of the transcript, so a session resumed
+  several times is summed that many times over. Subagent cost — reviewers,
+  judgement agents and workers — is counted, and reported apart from the lead's
+  as `delegated to subagents`.
 - **`plugin eval` is gated to early access**, so `evals/ab.py` stands in for it.
 - **Rust and Go support is written but untested** — neither toolchain is
   installed here. TypeScript and Python are verified against real repos.

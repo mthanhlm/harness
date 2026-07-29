@@ -128,9 +128,6 @@ def subagent_transcripts(path: str) -> list[Path]:
     the main transcript records them — there are no sidechain turns in it — so a
     ledger that reads one file sees only the lead.
 
-    That is the plugin's central economic claim going unmeasured: delegation to
-    cheaper models is exactly the spend it could not see. In one real session it
-    was $48.78 of subagent work against $117.27 recorded.
     """
     main = Path(path)
     directory = main.parent / main.stem / "subagents"

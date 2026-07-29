@@ -205,9 +205,7 @@ needs the last cannot, and "serial, because X must land before Y" is a complete
 and correct answer to write here.
 
 Every file appears under exactly one worker. Two workers sharing a file lose code
-silently — whoever writes last wins. The edit gate now refuses that write rather
-than trusting the split, but a refused edit is still a stalled slice, so get the
-partition right here.>
+silently — whoever writes last wins, with no error and no conflict marker.>
 
 Explicitly NOT changing:
 - <the neighbouring things that will look tempting mid-task>

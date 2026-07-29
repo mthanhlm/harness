@@ -106,6 +106,47 @@ def test_a_shell_edit_makes_the_gate_run_again(data_dir, hook_env, tmp_path):
     assert not last.startswith("skipped"), f"a new file must re-arm the gate, got {last!r}"
 
 
+def test_editing_the_same_file_again_makes_the_gate_run_again(data_dir, hook_env, tmp_path):
+    """The other half of the key, which the shell-edit test does not pin.
+
+    Keying only on the file count passes every other test here — and a normal
+    implement turn edits files it has already touched, over and over. The count
+    never moves, so every Stop after the first takes the cheap skip: the exact
+    92-skips-to-46-runs bug this was written to fix, reintroduced on the other
+    axis and just as invisible.
+    """
+    repo = plain_repo(tmp_path)
+    run_hook("post_edit_check.py", edit_json(repo, "a.json"), hook_env, repo)
+    run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    run_hook("post_edit_check.py", edit_json(repo, "a.json"), hook_env, repo)
+    run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    last = stop_lines(data_dir)[-1]["outcome"]
+    assert not last.startswith("skipped"), f"more lines in the same file must re-arm, got {last!r}"
+
+
+def test_a_pending_contract_is_said_out_loud(data_dir, hook_env, tmp_path):
+    """A plan nobody approved is worse than no plan at all.
+
+    `_out_of_scope` returns nothing for an unapproved contract, so the fence is
+    silently inert while the session looks planned. Three of six real contracts
+    sat pending with edits landing against them. The note is the only signal,
+    and without a test it can be deleted with the suite still green.
+    """
+    import contract as contract_mod
+
+    repo = plain_repo(tmp_path)
+    path = contract_mod.contract_path("sess")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Plan: x\n\nstatus: pending\nverdict: patch\n", encoding="utf-8")
+    run_hook("post_edit_check.py", edit_json(repo, "a.json"), hook_env, repo)
+
+    response = run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    assert "scope fence is not active" in response.get("systemMessage", "")
+
+
 def test_an_unchanged_turn_still_takes_the_cheap_skip(data_dir, hook_env, tmp_path):
     """The other end of the same key.
 

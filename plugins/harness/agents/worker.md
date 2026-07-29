@@ -33,8 +33,11 @@ Your brief names the files you own. Other workers are editing other files **at
 the same time**, in the same working tree.
 
 - **Never edit a file outside your list.** Another worker almost certainly owns
-  it, and whoever writes last wins — silently. This is the one failure that
-  parallel work adds and it produces no error, just lost code.
+  it, and whoever writes last wins. The edit gate refuses the write once it can
+  see the collision, so the usual outcome is a denied edit rather than lost code
+  — but it can only see files another worker has *already* written, so it is a
+  backstop and not a guarantee. Do not treat a write that succeeds as permission.
+  If you are denied, report that file as one you could not take.
 - **Reading anything is fine.** Read as widely as you need.
 - If your slice genuinely cannot be built without touching someone else's file,
   stop and say so in your result. Do not edit it and mention it afterwards.

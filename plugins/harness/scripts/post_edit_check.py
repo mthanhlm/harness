@@ -100,8 +100,6 @@ def main() -> int:
     root = repo_root(event.get("cwd"))
     profile = get_profile(root)
     checks = checks_for_file(profile, str(target))
-    if not checks:
-        return 0
 
     results = [run_file_check(check, root, target) for check in checks]
     failures = [r for r in results if r.blocking]
@@ -115,6 +113,14 @@ def main() -> int:
         checks_stat = session.setdefault("checks", {"run": 0, "failed": 0})
         checks_stat["run"] = int(checks_stat.get("run", 0)) + len(results)
         checks_stat["failed"] = int(checks_stat.get("failed", 0)) + len(failures)
+
+    # The edit is recorded even when nothing could check it. `files_touched` is
+    # what the scope fence, the end-of-turn gate and the worker collision deny
+    # all read, and returning before this line for an unchecked file type made
+    # every markdown edit invisible to all three at once — a whole session of
+    # SKILL.md changes went through the scope fence unexamined.
+    if not checks:
+        return 0
 
     trace("PostToolUse", event.get("session_id", "?"),
           "blocked" if failures else "ok", file=target.name,

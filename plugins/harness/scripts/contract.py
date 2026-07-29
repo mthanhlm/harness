@@ -21,13 +21,25 @@ _VERDICT_RE = re.compile(r"^\s*verdict:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 # dash and a description: "- src/auth/session.ts — refresh handling".
 _SCOPE_ENTRY_RE = re.compile(r"^\s*[-*]\s+`?([\w./\-]+\.[\w]+)`?", re.MULTILINE)
 # Where the agreed list stops and the deliberately-excluded list begins.
-# Anchored to the start of a line: an unanchored search for "not chang" also
-# matches a plan that merely *mentions* the section in a bullet, which truncates
-# the fence at that bullet and quietly drops every agreed file after it. One
-# real plan parsed 5 of its 15 files that way, and a fence that silently shrinks
-# is worse than none, because the gate still reports clean.
+#
+# Anchored to the start of a line, because an unanchored search for "not chang"
+# also matches a plan that merely *mentions* the section in a bullet: that
+# truncated the fence at the bullet and quietly dropped every agreed file after
+# it, and one real plan fenced 5 of its 17 files that way.
+#
+# But the anchor has to accept what markdown actually produces, and the first
+# version accepted only two exact spellings. `### Explicitly NOT changing`,
+# `Not changing:` and `*Explicitly NOT changing*:` all failed to match, so the
+# excluded bullets were parsed as *in scope* — the gate then certified edits to
+# the very files the plan promised not to touch. Both mistakes are silent; this
+# one is the dangerous direction, so the prefix is deliberately generous.
+#
+# `[ \t]` rather than `\s`: under MULTILINE, `\s*` re-consumes whole runs of
+# blank lines at every retry, which is quadratic on a long contract.
 _NOT_CHANGING_RE = re.compile(
-    r"^\s*(?:\*\*)?Explicitly\s+NOT\s+chang\w*", re.MULTILINE | re.IGNORECASE
+    r"^[ \t]*(?:[#>]{1,6}[ \t]*)?(?:[*_]{1,3}[ \t]*)?"
+    r"(?:Explicitly[ \t]+|Deliberately[ \t]+)?NOT[ \t]+chang\w*",
+    re.MULTILINE | re.IGNORECASE,
 )
 
 

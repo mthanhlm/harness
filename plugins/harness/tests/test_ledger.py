@@ -89,6 +89,14 @@ def test_the_summary_counts_delegated_spend(tmp_path):
 
     assert "claude-sonnet-5" in summary
     assert "delegated to subagents" in summary
+    # The label is a literal in the format string, so asserting on it alone
+    # passes with the figure hardcoded to zero — which is the whole number the
+    # report exists to show.
+    # Anchored to the label. The bare figure also appears in the per-model
+    # table, so asserting on it alone passes with the delegated total zeroed.
+    delegated = usage["subagents"]["cost_usd"]
+    assert f"delegated to subagents: ${delegated:8.2f}" in summary, summary
+    assert f"${usage['total_cost_usd']:.2f} total" in summary
 
 
 def test_an_entry_written_before_subagents_were_counted_still_reads():

@@ -98,45 +98,82 @@ def test_the_registry_and_the_lens_frontmatter_agree_on_paths():
         )
 
 
-SIBLINGS = sorted(p.parent.name for p in SKILL_FILES)
+SIBLINGS = sorted({p.parent.name for p in SKILL_FILES} | {p.stem for p in AGENT_FILES})
+
+# The ways a skill actually tells the model to dispatch something by name.
+# The first version matched one — ``` `implement` skill ``` — and missed
+# `Invoke the implement skill` (no backticks), `` `implement` with the Skill
+# tool `` (capital S), `Skill: implement` (the real invocation form quoted from
+# transcripts), and every agent name. Five of six natural regressions passed.
+#
+# A backticked name is how this codebase writes a dispatch; an unbackticked one
+# is usually prose *about* a skill ("loaded by the plan skill", "from the
+# architect subagent") and must not be flagged, or the test cries wolf and gets
+# deleted. The unbackticked form is caught only behind an imperative verb, which
+# is exactly how the regression read: "Invoke the implement skill".
+_INVOCATIONS = (
+    r"`{name}`[ \t]+(?:skill|(?:sub)?agent)\b",
+    r"\b(?:skill|(?:sub)?agent)[ \t]+`{name}`",
+    r"\bskill[ \t]*:[ \t]*`?{name}`?\b",
+    r"\bsubagent_type[ \t]*[:=][ \t]*[\"'`]?{name}\b",
+    r"\b(?:invoke|use|launch|run|dispatch|call|send)[ \t]+(?:it[ \t]+to[ \t]+)?"
+    r"(?:the[ \t]+)?`?{name}`?[ \t]+(?:skill|(?:sub)?agent)\b",
+)
 
 
 @pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.parent.name)
-def test_a_skill_never_tells_the_model_to_invoke_a_sibling_by_bare_name(path):
+def test_a_skill_never_tells_the_model_to_dispatch_a_sibling_by_bare_name(path):
     """`implement` does not resolve; `harness:implement` does.
 
-    This one is worth a test because it fails *quietly and plausibly*. An
-    unresolvable skill name does not raise — the model falls back to reading the
+    This is worth a test because it fails *quietly and plausibly*. An
+    unresolvable name does not raise — the model falls back to reading the
     skill's own SKILL.md, which looks like it worked and is not the same thing.
     A read document is information; an invoked skill is instructions. It went
-    unnoticed through a full day of real use, in a file that elsewhere states
-    the prefix rule for agents.
+    unnoticed through a full day of real use, in a file that states the prefix
+    rule for agents three hundred lines above getting it wrong for skills.
     """
     text = path.read_text(encoding="utf-8")
     for name in SIBLINGS:
         if name == path.parent.name:
             continue
-        for match in re.finditer(rf"`{re.escape(name)}`\s+skill", text):
-            prefix = text[max(0, match.start() - 10) : match.start()]
-            assert "harness:" in prefix, (
-                f"{path.parent.name} names the `{name}` skill without the harness: prefix"
-            )
+        for template in _INVOCATIONS:
+            pattern = template.format(name=re.escape(name))
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                prefix = text[max(0, match.start() - 12) : match.start() + len(name) + 2]
+                assert "harness:" in prefix, (
+                    f"{path.parent.name} dispatches `{name}` without the harness: prefix"
+                    f" — {text[max(0, match.start() - 40): match.end() + 10]!r}"
+                )
 
 
-def test_the_withheld_check_warning_reaches_the_user():
+def test_the_withheld_check_warning_reaches_the_user(data_dir, hook_env, tmp_path):
     """`additionalContext` goes to the model, `systemMessage` goes to the human.
 
     Granting a repo's commands is the one decision only a person can make. Sent
     to the wrong channel it was announced 28 times in one day to something that
-    cannot run `/harness:trust`, while every project check stayed off and the
-    end-of-turn gate reported passes.
+    cannot run `/harness:trust`, while every project check in every repo stayed
+    off and the end-of-turn gate reported passes.
+
+    Driven as a process rather than grepped for. The first version of this test
+    regexed the source for a `systemMessage` assignment, which passes happily
+    while the feature is inert — blanking the withheld list left all 173 tests
+    green.
     """
-    source = (PLUGIN / "scripts" / "session_start.py").read_text(encoding="utf-8")
-    warning = re.search(r"def _withheld_warning.*?(?=\ndef )", source, re.DOTALL)
-    assert warning, "session_start has no _withheld_warning"
-    assert "/harness:trust" in warning.group(0)
-    assert re.search(r'payload\["systemMessage"\]\s*=', source), (
-        "the warning must be emitted as a top-level systemMessage, not inside hookSpecificOutput"
+    from conftest import run_hook
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        '{"name":"x","scripts":{"test":"jest"}}\n', encoding="utf-8"
+    )
+
+    response = run_hook(
+        "session_start.py", {"session_id": "s", "cwd": str(repo), "source": "startup"},
+        hook_env, repo,
+    )
+
+    assert "/harness:trust" in response.get("systemMessage", ""), (
+        "a repo with untrusted commands must warn the user, not only the model"
     )
 
 

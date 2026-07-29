@@ -122,6 +122,46 @@ def test_a_worker_is_denied_a_file_another_worker_already_wrote(data_dir, git_re
     assert "worker-a" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_a_worker_may_edit_its_own_file_while_another_worker_holds_a_different_one(
+    data_dir, git_repo, hook_env
+):
+    """Fan-out is exactly this: two workers, two files, at the same time.
+
+    Every other deny test uses one filename, so a gate that denies on the mere
+    existence of another worker's record passes all of them. That mutation —
+    `if record.get("files_touched")` instead of matching the path — kills
+    parallel work on its first real run: worker B is refused its own first edit
+    and told it belongs to a file it never touched.
+    """
+    run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo)
+
+    response = run_hook(
+        "pre_edit_gate.py", gate_payload(git_repo, "b.py", "worker-b"), hook_env, git_repo
+    )
+
+    assert response == {}
+
+
+def test_a_markdown_edit_is_recorded_even_though_nothing_checks_it(
+    data_dir, git_repo, hook_env
+):
+    """`files_touched` is read by three gates; it was written by one condition.
+
+    `post_edit_check` returned before recording when no per-file check matched
+    the extension, so every `.md` edit was invisible to the scope fence, the
+    end-of-turn gate and the collision deny at once. A whole session of SKILL.md
+    changes went through the fence unexamined.
+    """
+    (git_repo / "notes.md").write_text("hello\n", encoding="utf-8")
+
+    run_hook(
+        "post_edit_check.py", edit_payload(git_repo, "notes.md", "worker-a"), hook_env, git_repo
+    )
+
+    session = load_session("sess")
+    assert "notes.md" in [Path(f).name for f in session["files_touched"]]
+
+
 def test_a_worker_may_rewrite_its_own_file(data_dir, git_repo, hook_env):
     """Editing a file twice is ordinary work, not a collision."""
     run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo)

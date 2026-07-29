@@ -108,7 +108,7 @@ Every brief carries all five:
 
 ## 6. Refute before reporting
 
-Every finding goes to the `refuter` agent before it reaches the user, and only
+Every finding goes to the `harness:refuter` agent before it reaches the user, and only
 survivors are reported. This is not ceremony. A reviewer asked to find problems
 will produce some whether or not they exist, and acting on an invented one adds
 a defensive branch for a case that cannot happen — which is precisely the

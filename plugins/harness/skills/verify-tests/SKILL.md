@@ -34,7 +34,7 @@ suite tells you nothing.
 
 ## 2. Read the tests first
 
-Use the `reviewer-tests` agent on the target. It will flag the ones that look
+Use the `harness:reviewer-tests` agent on the target. It will flag the ones that look
 decorative: assertions on constants, mocks that supply their own answer, call
 counts standing in for behaviour, expected values computed the same way the
 implementation computes them.

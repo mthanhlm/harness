@@ -31,7 +31,7 @@ The most expensive thing in any diff, because it is not one mistake but a
 permanent tax: two functions that nearly agree will drift, and then callers of
 each get different behaviour from the same intent.
 
-Use the `reuse-auditor` agent against what was added — it ensures a CodeGraph
+Use the `harness:reuse-auditor` agent against what was added — it ensures a CodeGraph
 index exists first, then follows calls rather than text to find duplicates that
 are named differently, which is how they got written twice in the first place.
 
@@ -79,7 +79,7 @@ Anything the change made false: docstrings with parameters that no longer exist,
 READMEs describing an old command, examples that would fail if run, a stale
 `CLAUDE.md` line — which misleads every future session, not just this one.
 
-Use the `reviewer-docs` agent if the change touched signatures, names, defaults,
+Use the `harness:reviewer-docs` agent if the change touched signatures, names, defaults,
 commands or public behaviour.
 
 Only fix what this change broke. Pre-existing gaps elsewhere are not this diff's

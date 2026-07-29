@@ -8,6 +8,8 @@ the gate goes on reporting clean either way.
 
 from __future__ import annotations
 
+import pytest
+
 from contract import Contract
 
 PLAN = """# Plan: something
@@ -58,8 +60,53 @@ def test_reuse_paths_below_the_scope_section_are_not_scope():
     assert "src/other.py" not in Contract(PLAN).scoped_files
 
 
-def test_a_bold_exclusion_heading_is_recognised():
-    """Plans write it `**Explicitly NOT changing:**` about as often as plain."""
-    bold = PLAN.replace("Explicitly NOT changing:", "**Explicitly NOT changing:**")
+SPELLINGS = [
+    "Explicitly NOT changing:",
+    "**Explicitly NOT changing:**",
+    "*Explicitly NOT changing*:",
+    "### Explicitly NOT changing",
+    "## Explicitly NOT changing",
+    "> NOT changing",
+    "Not changing:",
+    "NOT changing (explicitly):",
+    "Explicitly not changing:",
+    "Deliberately NOT changing:",
+    "  Explicitly NOT changing:",
+]
 
-    assert "src/excluded.py" not in Contract(bold).scoped_files
+
+@pytest.mark.parametrize("heading", SPELLINGS)
+def test_every_way_a_plan_writes_the_exclusion_heading_cuts_the_fence(heading):
+    """The dangerous direction, and the one a first fix got wrong.
+
+    Anchoring the cutoff to a line start fixed a truncation bug and introduced a
+    worse one: the pattern accepted two exact spellings, so `### Explicitly NOT
+    changing` and `Not changing:` stopped matching and their bullets were parsed
+    as *in scope*. The plan says it will not touch a deploy workflow, the user
+    approves, the agent edits it, and the gate reports clean — it certifies the
+    violation.
+
+    Failing to cut is unsafe; cutting too early is merely noisy. This asserts
+    both halves on every spelling.
+    """
+    plan = PLAN.replace("Explicitly NOT changing:", heading)
+    scoped = Contract(plan).scoped_files
+
+    assert "src/excluded.py" not in scoped, f"{heading!r} let an excluded file into scope"
+    assert scoped == ["src/one.py", "src/two.py", "src/three.py"], (
+        f"{heading!r} cut the agreed list short"
+    )
+
+
+def test_an_exclusion_named_mid_bullet_does_not_cut():
+    """The other direction, on the widened pattern.
+
+    Loosening the prefix must not go so far that a bullet *mentioning* the
+    phrase truncates the list again — that is the bug the anchor was added for.
+    """
+    plan = PLAN.replace(
+        "- src/three.py — third",
+        "- src/three.py — third, and we are NOT changing its callers",
+    )
+
+    assert Contract(plan).scoped_files == ["src/one.py", "src/two.py", "src/three.py"]

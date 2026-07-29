@@ -12,16 +12,18 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py"
 ```
 
 Present the numbers plainly, **and say what they miss.** Cost comes from real
-token counts in each session's transcript rather than an estimate — but the
-ledger reads only the *main* transcript, so every subagent is invisible to it,
-including the workers where the building now happens. It also appends one entry
-per session end, each a fresh re-read, so a resumed session is counted several
-times over.
+token counts in each session's transcript rather than an estimate, and it is
+split two ways: the lead session, and everything delegated to subagents — the
+reviewers, the judgement agents and the workers. The report prints that as
+`Lead session: $X   delegated to subagents: $Y`. Keep the split when you relay
+it, because the question the ledger exists to answer is whether delegating to a
+cheaper model pays, and a single merged figure cannot answer it.
 
-So report the figure as a floor, not a total, and say which way it is wrong. A
-confident wrong number is worse than an honest range: the usage meter is the
-thing to trust until this is fixed. What the ledger *is* good for is the gate
-counts and the ratio between sessions, neither of which the meter shows.
+What it still gets wrong: it appends one entry per `SessionEnd`, each a fresh
+re-read of the transcript, so a session resumed several times is summed that
+many times over. Say so when you give a total. Entries written before subagents
+were counted carry only the lead's cost and are reported as such rather than as
+free.
 
 The split it does report — including the cache-read and cache-write split,
 which is usually where most of the money is.
