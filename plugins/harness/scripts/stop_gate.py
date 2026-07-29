@@ -201,21 +201,12 @@ def main() -> int:
         pending = _pending_contract_note(session_id)
 
         # "Passed" and "nothing ran" are not the same fact, and reporting them
-        # with the same word is the failure this gate exists to prevent. A repo
-        # whose checks are all withheld for want of trust has none of them here,
-        # and the old branch called that a pass.
+        # with the same word is the failure this gate exists to prevent. The old
+        # branch called an empty check list a pass.
         if not checks:
             session["heavy_ran_at"] = ran_at
-            withheld = profile.get("withheld_checks") or []
-            trace("Stop", session_id, "nothing to verify",
-                  files=len(touched), withheld=len(withheld))
+            trace("Stop", session_id, "nothing to verify", files=len(touched))
             notes = ["nothing to verify — this project defines no checks the harness can run"]
-            if withheld:
-                names = ", ".join(f"`{' '.join(c.get('argv') or [])}`" for c in withheld[:3])
-                notes = [
-                    f"nothing was verified: {len(withheld)} check(s) this repo defines are"
-                    f" withheld until it is trusted ({names}). Run /harness:trust to grant them"
-                ]
             if pending:
                 notes.append(pending)
             emit({"systemMessage": f"harness: {'; '.join(notes)}.", "suppressOutput": True})

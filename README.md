@@ -55,7 +55,6 @@ There is one entry point. Everything else the model loads for itself.
 |---|---|
 | `/harness:plan` | **Start here.** Understands the request, checks what exists, judges whether the code is worth building on, gets your approval — then builds and reviews it |
 | `/harness:review` | Standalone review, for code you didn't just write (a PR, inherited code) |
-| `/harness:trust` | Approve the commands a repository supplies for itself |
 | `/harness:report` | What recent sessions cost, and how often a gate caught something |
 | `/harness:switch off` | Kill switch |
 
@@ -126,31 +125,29 @@ it says so and the search falls back to Grep and Glob.
 Indexing is fast — a few hundred milliseconds on a small repo — and the
 `.codegraph/` directory it writes is excluded for you (see below).
 
-## A cloned repository does not get to run its code
+## A cloned repository does get to run its code
 
-The harness executes what it detects, and some of what it detects is written by
-the repository rather than by this plugin — `.harness.json` check entries,
-`package.json` scripts, and any tool resolved out of `node_modules/.bin` or
-`.venv/bin`. All three arrive with a clone. Opening someone's repo and editing
-one file in it was enough to run whatever they specified, with your full
-permissions, no prompt, and nothing in the transcript.
+There is no approval step. Every check the detector finds runs, in every
+repository, from the first turn — and some of those checks execute code that
+arrived with the clone. `pytest` imports `conftest.py`, `go test` compiles
+`_test.go`, `cargo check` runs `build.rs`, `eslint` loads `eslint.config.js`,
+`npm run test` runs whatever `package.json` says today, and a tool resolved out
+of `node_modules/.bin` or `.venv/bin` is a binary the repo shipped. Hooks are not
+prompted for the way a Bash command is, so **opening someone else's repository
+and working in it runs their code, with your permissions, with nothing in the
+transcript.**
 
-The line is **not** who wrote the command — it is whether running it executes
-code that lives in the tree. `py_compile`, `node --check` and `bash -n` parse a
-file and stop, so they always run. `pytest` imports `conftest.py`, `go test`
-compiles `_test.go`, `cargo check` runs `build.rs` and `eslint` loads
-`eslint.config.js` — the plugin composed all four commands and every one of them
-runs code that arrived with the clone, so they wait too.
+`.harness.json` is honoured on the same terms: a repository can add checks, and
+it can switch its own checks off, by committing one file.
 
-`/harness:trust` shows you the commands before you approve them, once per
-repository. The approval covers what those commands would *execute*, not just how
-they are spelled, so a changed `package.json` script body or a swapped vendored
-binary comes back for another look.
+This was previously gated behind a per-repository approval (`/harness:trust`),
+removed deliberately in favour of not having the step at all. The trade is
+stated here rather than left for you to discover: what you get is that checks
+always run and are never silently absent, which is the failure the approval step
+twice caused. What you give up is the boundary.
 
-This is not the harness blocking by default. Your edit is never blocked; the
-degraded state is simply fewer checks, which is what already happens in a repo
-with no tooling. Session start says which ones are withheld, every session, so
-running less than you think is never silent.
+`/harness:switch off` is the control that remains, and it is yours rather than
+the repository's.
 
 ## Its own artifacts stay out of your product
 

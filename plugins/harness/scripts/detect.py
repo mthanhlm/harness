@@ -10,9 +10,7 @@ Detection follows a strict order of authority:
 
 1. **What the repo declares.** `package.json` scripts are the repo's own
    statement of how it is checked. This beats guessing, and it is how
-   `oxlint`/`oxfmt` get picked up without this file having heard of them. It is
-   also code the repo controls, so it is marked `source: "repo"` and withheld
-   until the user trusts this repository.
+   `oxlint`/`oxfmt` get picked up without this file having heard of them.
 2. **Per-file tools the repo has opted into.** A tool counts as opted-in only
    when it is installed project-locally or has a config file in the repo. A
    globally installed ruff must never gate a repo that does not use ruff.
@@ -41,7 +39,7 @@ from state import profiles_dir, read_json, repo_key, write_json
 FAST_KINDS = ("syntax", "format", "lint", "typecheck")
 HEAVY_KINDS = ("typecheck", "lint", "test", "build")
 
-PROFILE_VERSION = 8
+PROFILE_VERSION = 9
 
 # Presence or content of these decides the profile, and changes to any of them
 # invalidate the cache.
@@ -77,17 +75,13 @@ def _check(
     label: str,
     blocking: bool = True,
     extensions: tuple[str, ...] = (),
-    source: str = "plugin",
 ) -> dict[str, Any]:
-    """One check. `source` records who wrote the `argv`, and it is load-bearing.
+    """One check: what to run, where, and whether failing it should block.
 
-    The line is not who wrote the `argv` — it is whether running the command
-    executes code that lives in the working tree. `py_compile` and `node --check`
-    parse a file and stop, so they are safe in any repo. `pytest` imports
-    `conftest.py`, `go test` compiles `_test.go`, `cargo check` runs `build.rs`
-    and `eslint` loads `eslint.config.js`; the plugin composed all four commands
-    and every one of them runs code that arrived with the clone. Those are
-    `repo`, and they wait until the user has said so.
+    Every check here runs, wherever the command came from. Some of them execute
+    code that arrived with the clone — `pytest` imports `conftest.py`, `go test`
+    compiles `_test.go`, `cargo check` runs `build.rs`, `eslint` loads
+    `eslint.config.js` — and that is accepted rather than gated.
     """
     return {
         "kind": kind,
@@ -96,7 +90,6 @@ def _check(
         "label": label,
         "blocking": blocking,
         "extensions": list(extensions),
-        "source": source,
     }
 
 
@@ -199,7 +192,6 @@ def _declared_script_checks(root: Path, pkg: dict[str, Any]) -> list[dict[str, A
                 scope="project",
                 label=f"{Path(runner[0]).name} run {name}",
                 blocking=blocking,
-                source="repo",
             )
         )
     return checks
@@ -255,7 +247,6 @@ def _node_checks(root: Path) -> list[dict[str, Any]]:
                 [eslint, "--no-warn-ignored", "--max-warnings", "0", "{file}"],
                 scope="file",
                 label="eslint",
-                source="repo",
                 extensions=WEB_EXT,
             )
         )
@@ -267,7 +258,6 @@ def _node_checks(root: Path) -> list[dict[str, Any]]:
                 [prettier, "--check", "--no-color", "{file}"],
                 scope="file",
                 label="prettier",
-                source="repo",
                 blocking=False,
                 extensions=WEB_EXT + (".json", ".css", ".scss", ".md"),
             )
@@ -328,7 +318,7 @@ def _python_checks(root: Path) -> list[dict[str, Any]]:
 
     if mypy := _opted_in(root, "mypy", ("mypy.ini", ".mypy.ini")):
         checks.append(
-            _check("typecheck", [mypy, "{file}"], scope="file", label="mypy", extensions=PY_EXT, source="repo")
+            _check("typecheck", [mypy, "{file}"], scope="file", label="mypy", extensions=PY_EXT)
         )
     elif pyright := _opted_in(root, "pyright", ("pyrightconfig.json",)):
         checks.append(
@@ -336,7 +326,7 @@ def _python_checks(root: Path) -> list[dict[str, Any]]:
         )
 
     if _has_pytest(root) and (pytest := _local_bin(root, "pytest") or shutil.which("pytest")):
-        checks.append(_check("test", [pytest, "-q", "-x"], scope="project", label="pytest", source="repo"))
+        checks.append(_check("test", [pytest, "-q", "-x"], scope="project", label="pytest"))
     return checks
 
 
@@ -370,7 +360,7 @@ def _go_checks() -> list[dict[str, Any]]:
     checks = [
         _check("build", [go, "build", "./..."], scope="project", label="go build"),
         _check("lint", [go, "vet", "./..."], scope="project", label="go vet"),
-        _check("test", [go, "test", "./..."], scope="project", label="go test", source="repo"),
+        _check("test", [go, "test", "./..."], scope="project", label="go test"),
     ]
     if gofmt := shutil.which("gofmt"):
         checks.insert(
@@ -393,8 +383,8 @@ def _rust_checks() -> list[dict[str, Any]]:
         return []
     return [
         _check("format", [cargo, "fmt", "--check"], scope="project", label="cargo fmt", blocking=False),
-        _check("typecheck", [cargo, "check", "--quiet"], scope="project", label="cargo check", source="repo"),
-        _check("test", [cargo, "test", "--quiet"], scope="project", label="cargo test", source="repo"),
+        _check("typecheck", [cargo, "check", "--quiet"], scope="project", label="cargo check"),
+        _check("test", [cargo, "test", "--quiet"], scope="project", label="cargo test"),
     ]
 
 
@@ -488,33 +478,40 @@ def build_profile(root: Path) -> dict[str, Any]:
         "checks": _dedupe(checks),
     }
     _apply_overrides(root, profile)
-    _mark_vendored(root, profile)
     return profile
 
 
-def _mark_vendored(root: Path, profile: dict[str, Any]) -> None:
-    """A tool resolved out of the repo is the repo's code, whatever composed the argv.
+def _override_check(entry: Any) -> dict[str, Any] | None:
+    """One `.harness.json` check entry, normalised — or None if unusable.
 
-    `_local_bin` deliberately prefers `node_modules/.bin/` and `.venv/bin/` so a
-    repo is checked by the version it pins. That preference is right, and it also
-    means a file that arrived with a clone gets executed — so these are marked
-    repo-authored on the same footing as a `.harness.json` entry.
+    These arrive as unvalidated JSON and become an argv the hooks execute, and
+    the consumers index `argv`, `scope`, `kind` and `label` directly. A missing
+    key raises inside a hook, where `guard()` catches it and exits 0: the hook
+    does nothing and says nothing, which reads as "clean" rather than "broken".
+    `post_edit_check` never records `files_touched` and `stop_gate` never records
+    `heavy_ran_at`, so a four-key typo switches off the scope fence too.
+
+    That crash predates the approval step's removal — it was reachable in any
+    repo the user had approved. What changed is that it no longer needs
+    approving, so the entry is validated here, where it enters, instead of being
+    carried to whichever consumer subscripts it first.
     """
-    inside = str(root.resolve())
-    for check in profile["checks"]:
-        argv = check.get("argv") or []
-        if not argv:
-            continue
-        try:
-            # Both spellings, because `resolve()` follows symlinks: a committed
-            # `.venv/bin/mypy -> /usr/bin/make` would otherwise resolve outside
-            # the tree and be classed as the plugin's own command.
-            lexical = os.path.abspath(argv[0])
-            resolved = str(Path(argv[0]).resolve())
-        except (OSError, ValueError):
-            continue
-        if lexical.startswith(inside + "/") or resolved.startswith(inside + "/"):
-            check["source"] = "repo"
+    if not isinstance(entry, dict):
+        return None
+    argv = entry.get("argv")
+    kind = entry.get("kind")
+    if not (isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv)):
+        return None
+    if not isinstance(kind, str) or entry.get("scope") not in ("file", "project"):
+        return None
+    return {
+        "kind": kind,
+        "argv": argv,
+        "scope": entry["scope"],
+        "label": str(entry.get("label") or kind),
+        "blocking": bool(entry.get("blocking", True)),
+        "extensions": [e for e in (entry.get("extensions") or []) if isinstance(e, str)],
+    }
 
 
 def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:
@@ -523,41 +520,31 @@ def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:
     Supported keys: `disable` (check kinds to drop) and `checks` (extra check
     definitions appended verbatim). Deliberately tiny — an escape hatch, not a
     configuration language.
+
+    Both are honoured on sight. A repository can therefore switch its own checks
+    off by committing this file, which is the accepted cost of having no
+    approval step: the same file that lets a repo correct a wrong detection lets
+    it disarm a correct one. `/harness:switch` is the user's own control.
+
+    Applied at build time, so it is baked into the cached profile. `.harness.json`
+    is in MANIFESTS, so editing it changes the fingerprint and forces a rebuild.
     """
     override = read_json(root / ".harness.json", default=None)
     if not isinstance(override, dict):
         return
-    if isinstance(disabled := override.get("disable"), list):
-        # Recorded rather than applied. Switching a check off is repo content
-        # acting on the harness, so it waits for trust like everything else —
-        # otherwise a clone can silently disarm every gate by shipping one file.
-        profile["disabled_kinds"] = [d for d in disabled if isinstance(d, str)]
     if isinstance(extra := override.get("checks"), list):
-        # Verbatim except for provenance, which the repo does not get to claim.
-        profile["checks"].extend({**c, "source": "repo"} for c in extra if isinstance(c, dict))
+        profile["checks"].extend(c for c in map(_override_check, extra) if c)
+    if isinstance(disabled := override.get("disable"), list):
+        kinds = {d for d in disabled if isinstance(d, str)}
+        # Recorded, not merely acted on. Deleting the entries leaves the profile
+        # indistinguishable from one where detection found nothing, and the
+        # session-start message then blames a detection failure for a choice the
+        # repository made.
+        profile["disabled_by_repo"] = sorted(
+            {c["kind"] for c in profile["checks"] if c.get("kind") in kinds}
+        )
+        profile["checks"] = [c for c in profile["checks"] if c.get("kind") not in kinds]
     profile["has_override"] = True
-
-
-def _withhold_untrusted(root: Path, profile: dict[str, Any]) -> dict[str, Any]:
-    """Move repo-authored commands out of `checks` until this repo is trusted.
-
-    Applied on every read rather than baked into the cache, because trust is
-    granted between runs and a cached profile would keep withholding after the
-    user had said yes.
-    """
-    import trust
-
-    disabled = profile.get("disabled_kinds") or []
-    if trust.is_trusted(root, profile):
-        if disabled:
-            profile["checks"] = [c for c in profile["checks"] if c.get("kind") not in disabled]
-        profile["withheld_checks"] = []
-        return profile
-
-    withheld = trust.repo_authored(profile)
-    profile["checks"] = [c for c in profile["checks"] if c.get("source") != "repo"]
-    profile["withheld_checks"] = withheld
-    return profile
 
 
 def get_profile(root: Path, *, refresh: bool = False) -> dict[str, Any]:
@@ -570,13 +557,13 @@ def get_profile(root: Path, *, refresh: bool = False) -> dict[str, Any]:
             and cached.get("version") == PROFILE_VERSION
             and cached.get("fingerprint") == _fingerprint(root)
         ):
-            return _withhold_untrusted(root, cached)
+            return cached
     profile = build_profile(root)
     try:
         write_json(cache, profile)
     except OSError:
         pass  # A read-only data dir degrades to rebuilding, not to failing.
-    return _withhold_untrusted(root, profile)
+    return profile
 
 
 def checks_for_file(profile: dict[str, Any], file_path: str) -> list[dict[str, Any]]:

@@ -146,38 +146,38 @@ def test_a_skill_never_tells_the_model_to_dispatch_a_sibling_by_bare_name(path):
                 )
 
 
-def test_the_withheld_check_warning_reaches_the_user(data_dir, hook_env, tmp_path):
-    """`additionalContext` goes to the model, `systemMessage` goes to the human.
+def test_session_start_announces_the_checks_a_repo_will_actually_run(
+    data_dir, hook_env, tmp_path
+):
+    """The context has to name the commands, because nothing else will.
 
-    Granting a repo's commands is the one decision only a person can make. Sent
-    to the wrong channel it was announced 28 times in one day to something that
-    cannot run `/harness:trust`, while every project check in every repo stayed
-    off and the end-of-turn gate reported passes.
-
-    Driven as a process rather than grepped for. The first version of this test
-    regexed the source for a `systemMessage` assignment, which passes happily
-    while the feature is inert — blanking the withheld list left all 173 tests
-    green.
+    Driven as a process rather than grepped for. A source-level assertion passes
+    happily while the feature is inert — the previous version of this test
+    regexed for a `systemMessage` assignment, and blanking the list it described
+    left all 173 tests green.
     """
     from conftest import run_hook
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "package.json").write_text(
-        '{"name":"x","scripts":{"test":"jest"}}\n', encoding="utf-8"
-    )
+    (repo / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
 
     response = run_hook(
         "session_start.py", {"session_id": "s", "cwd": str(repo), "source": "startup"},
         hook_env, repo,
     )
 
-    assert "/harness:trust" in response.get("systemMessage", ""), (
-        "a repo with untrusted commands must warn the user, not only the model"
+    context = response["hookSpecificOutput"]["additionalContext"]
+    project_line = next(
+        (line for line in context.splitlines() if "when the turn ends" in line), ""
+    )
+    assert "pytest" in project_line, (
+        "a check the harness runs at the end of the turn must be announced on the"
+        f" end-of-turn line, not merely somewhere in the blob: {context!r}"
     )
 
 
-_STATE_DIRS = ("data_dir", "trust_dir", "ledger_dir", "contracts_dir", "profiles_dir", "shards_dir")
+_STATE_DIRS = ("data_dir", "ledger_dir", "contracts_dir", "profiles_dir", "shards_dir")
 _SHELLS_OUT = re.compile(r"^(.*)python3 \"\$\{CLAUDE_PLUGIN_ROOT\}/scripts/(\w+\.py)\"", re.MULTILINE)
 
 
@@ -186,9 +186,7 @@ def test_a_skill_that_shells_out_to_plugin_state_passes_the_data_directory(path)
     """A shell does not inherit `CLAUDE_PLUGIN_DATA`; the hooks are given it.
 
     So a skill command that reads or writes plugin state resolves a *different*
-    directory than every hook — and both `trust.py` and `ledger.py` report
-    confident success against it. Following `/harness:trust` printed
-    `trusted: yes` while writing the grant somewhere the gates never read, and
+    directory than every hook, and reports confident success against it.
     `/harness:report` answered "No sessions recorded yet" over a ledger holding
     ten sessions and $830.
 

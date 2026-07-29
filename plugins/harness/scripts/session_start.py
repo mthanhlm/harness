@@ -51,48 +51,23 @@ def _describe(profile: dict) -> str:
         " to fix. Failures already present at HEAD are ignored, so do not go fixing"
         " unrelated problems you did not cause.",
     ]
-    if not per_file and not project:
+    # `_universal_checks` always contributes `json syntax`, so detection alone
+    # cannot empty this list. The only way it empties is a repo switching its own
+    # checks off — which makes "no tooling was detected" false every time it
+    # would have been printed, and worth distinguishing from the real thing.
+    suppressed = profile.get("disabled_by_repo") or []
+    if suppressed:
+        lines.append(
+            f"\nThis repository's `.harness.json` switched off: {', '.join(suppressed)}."
+            " That is the repo's own choice rather than a detection failure, and"
+            " verification here is weaker than the list above suggests."
+        )
+    elif not per_file and not project:
         lines.append(
             "No project tooling was detected, so only syntax checks run."
             " Verification for this repo has to come from something you run yourself."
         )
-
-    withheld = profile.get("withheld_checks") or []
-    if withheld:
-        # Said out loud every session until it is resolved. Quietly running
-        # fewer checks than the user believes is the failure mode this whole
-        # boundary would otherwise introduce.
-        commands = "; ".join(f"`{' '.join(c.get('argv') or [])}`" for c in withheld[:4])
-        lines.append(
-            f"\n{len(withheld)} check(s) this repository defines are NOT running: {commands}."
-            " They are commands the repo itself supplies rather than ones the harness"
-            " composed, so they wait until you have looked at them — cloning a"
-            " repository should not run its code. Approve with `/harness:trust`."
-            " Until then verification here is weaker than usual, which matters most"
-            " in a codebase you do not know."
-        )
     return "\n".join(lines)
-
-
-def _withheld_warning(profile: dict) -> str | None:
-    """The same fact as above, addressed to the person who can act on it.
-
-    Granting a repository's commands is the one decision here that only a human
-    can make, and `additionalContext` goes to the model. So for a full day it
-    was announced 28 times to something that cannot run `/harness:trust`, while
-    every project check in every repo stayed switched off and the end-of-turn
-    gate reported passes.
-    """
-    withheld = profile.get("withheld_checks") or []
-    if not withheld:
-        return None
-    commands = ", ".join(f"`{' '.join(c.get('argv') or [])}`" for c in withheld[:3])
-    more = f" and {len(withheld) - 3} more" if len(withheld) > 3 else ""
-    return (
-        f"harness: {len(withheld)} check(s) this repo defines are NOT running"
-        f" ({commands}{more}). Nothing here is verified against them until you run"
-        " /harness:trust."
-    )
 
 
 def main() -> int:
@@ -122,16 +97,14 @@ def main() -> int:
     trace("SessionStart", event.get("session_id", "?"), "bootstrapped",
           source=event.get("source"), agent=event.get("agent_type"))
 
-    payload = {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": _describe(profile),
+    emit(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": _describe(profile),
+            }
         }
-    }
-    warning = _withheld_warning(profile)
-    if warning:
-        payload["systemMessage"] = warning
-    emit(payload)
+    )
     return 0
 
 
