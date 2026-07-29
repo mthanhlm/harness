@@ -46,27 +46,46 @@ def _signature(label: str, output: str) -> str:
     return hashlib.sha256(f"{label}\n{output}".encode("utf-8")).hexdigest()[:16]
 
 
-def _out_of_scope(session_id: str, touched: list[str]) -> list[str]:
+def _out_of_scope(session_id: str, touched: list[str], root: Path) -> list[str]:
     """Files changed that the approved contract did not list.
 
     Scope creep is the cheapest thing here to detect and among the most
     expensive to review, because the extra changes are plausible on their own
     and only look wrong next to what was agreed.
 
-    Matching is by path suffix: the contract names repo-relative paths and the
-    session records absolute ones, and a suffix match is right often enough
-    without a resolution step that could wrongly accuse on a symlinked tree.
+    The contract names repo-relative paths and the session records absolute
+    ones, so a touched path is made relative to `root` and compared against
+    each scoped entry exactly — `src/lib/other-utils.ts` no longer matches a
+    contract that scoped `utils.ts` just because one is a suffix of the other.
+    A path that does not sit under `root` cannot be made relative to it, so it
+    falls back to an anchored `endswith("/" + entry)`: this is deliberately
+    not a resolution step, because resolving would wrongly accuse on a
+    symlinked tree where the touched path and the repo root disagree about
+    which real directory they are in.
+
+    Normalising with `removeprefix` rather than `lstrip`, because `lstrip` takes
+    a *set* of characters: it turned `.github/workflows/ci.yml` into
+    `github/...` and `.env.example` into `env.example`. Under the old suffix
+    match that mangling cancelled out and nobody saw it; against an exact
+    comparison it means a contract can no longer scope any dotfile, and the gate
+    blocks the turn over a file the plan named.
     """
     agreed = contract_mod.load(session_id)
     if not agreed or not agreed.approved:
         return []
-    scoped = agreed.scoped_files
+    scoped = [entry.removeprefix("./").lstrip("/") for entry in agreed.scoped_files]
     if not scoped:
         return []
+    root_posix = root.as_posix().rstrip("/")
     strays = []
     for path in touched:
         posix = Path(path).as_posix()
-        if not any(posix.endswith(entry.lstrip("./")) for entry in scoped):
+        if posix == root_posix or posix.startswith(root_posix + "/"):
+            relative = posix[len(root_posix) + 1 :]
+            in_scope = relative in scoped
+        else:
+            in_scope = any(posix.endswith("/" + entry) for entry in scoped)
+        if not in_scope:
             strays.append(posix)
     return strays
 
@@ -171,8 +190,10 @@ def main() -> int:
             )
             return 0
 
+        root = repo_root(event.get("cwd") or session.get("repo_root"))
+
         # Cheaper than any project check, and a more common defect.
-        strays = _out_of_scope(session_id, touched)
+        strays = _out_of_scope(session_id, touched, root)
         if strays and not session.get("scope_reported"):
             session["scope_reported"] = True
             session["heavy_ran_at"] = ran_at
@@ -195,7 +216,6 @@ def main() -> int:
             )
             return 0
 
-        root = repo_root(event.get("cwd") or session.get("repo_root"))
         profile = get_profile(root)
         checks = heavy_checks(profile)
         pending = _pending_contract_note(session_id)

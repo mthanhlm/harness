@@ -13,13 +13,19 @@ user-invocable: false
 
 # Database lens
 
+This loads on `db/`, `migrations/` and every `.sql` file, whatever the project
+actually uses — Drizzle, Prisma, Alembic, Rails or hand-written SQL. Where a
+specific tool is named below it is an example; check what this repo declares
+before repeating it. The judgement holds everywhere, the commands do not.
+
 ## Migrations are the one thing you cannot take back
 
 Code can be reverted; a migration that has run in production has already changed
 data. Treat every migration as permanent and one-way.
 
-- Generate migrations with the project's own tooling (`drizzle-kit generate`),
-  never by hand-editing a file that has already been applied.
+- Generate migrations with the project's own tooling — `drizzle-kit generate`,
+  `prisma migrate dev`, `alembic revision` — never by hand-editing a file that
+  has already been applied.
 - Adding a `NOT NULL` column to a populated table needs a default or a backfill,
   or it fails on real data while passing on an empty dev database.
 - Renaming and dropping destroy data. Deploying code that stops using a column

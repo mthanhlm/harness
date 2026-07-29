@@ -20,6 +20,14 @@ Updates come from the remote, so a change is only live once it is pushed:
 claude plugin marketplace update autonxt-harness
 ```
 
+**Bump `version` in `plugin.json` with every change that must reach a running
+session.** That command refreshes marketplace metadata but does not re-fetch a
+plugin whose version it has already seen — it finds the version directory
+present, leaves it, and reports success while the hooks go on executing the old
+code. The failure reads as "I fixed it and nothing changed", so the next move is
+usually to go and change correct code. A test now fails when anything under
+`plugins/` changes without the version moving.
+
 To develop against a local clone instead — edits take effect on the next session
 with no push cycle:
 
@@ -265,10 +273,21 @@ python3 plugins/harness/evals/ab.py --model claude-opus-5   --runs 3
 **First measured result** (`slugify` case, Sonnet 5, 1 run per arm): both arms
 passed; harness $0.242, bare $0.216. So on this task the harness cost about 12%
 and changed nothing — the case is too easy to tell the arms apart. That is a real
-finding about the *case*, not evidence either way about the plugin. A case that
-discriminates needs to be hard enough that the bare arm sometimes fails: an
-unfamiliar codebase, a change with non-obvious callers, or a task where the
-tempting approach is wrong. Add those under `evals/cases/`.
+finding about the *case*, not evidence either way about the plugin.
+
+`dynamic-caller` is the second case, built to discriminate: a handler reached
+only through a string-keyed dispatch table, so the call site contains no
+occurrence of the name being called. A bare model greps, patches the direct
+callers, and misses the dispatched one; the hidden grader goes through the
+dispatch path. **Written but not yet run** — that costs real money and is a
+decision, not a detail.
+
+An eval case is only worth running if its grader fails on unmodified code, and
+until now nothing checked that: `pytest.ini` sets `testpaths` to the test
+directory, so **nothing under `evals/cases/` was ever collected** — the whole
+suite ran without a single assertion touching an eval. `tests/test_eval_cases.py`
+closes it, proving for every case that the visible tests pass on the pristine
+fixture and the grader fails on it. `slugify` had never been checked either.
 
 `claude plugin eval --ablation with-without` does the same job with more
 machinery, and is worth switching to if early access opens up on this account.
