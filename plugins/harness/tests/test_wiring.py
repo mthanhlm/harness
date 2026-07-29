@@ -177,6 +177,35 @@ def test_the_withheld_check_warning_reaches_the_user(data_dir, hook_env, tmp_pat
     )
 
 
+_STATE_DIRS = ("data_dir", "trust_dir", "ledger_dir", "contracts_dir", "profiles_dir", "shards_dir")
+_SHELLS_OUT = re.compile(r"^(.*)python3 \"\$\{CLAUDE_PLUGIN_ROOT\}/scripts/(\w+\.py)\"", re.MULTILINE)
+
+
+@pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_a_skill_that_shells_out_to_plugin_state_passes_the_data_directory(path):
+    """A shell does not inherit `CLAUDE_PLUGIN_DATA`; the hooks are given it.
+
+    So a skill command that reads or writes plugin state resolves a *different*
+    directory than every hook — and both `trust.py` and `ledger.py` report
+    confident success against it. Following `/harness:trust` printed
+    `trusted: yes` while writing the grant somewhere the gates never read, and
+    `/harness:report` answered "No sessions recorded yet" over a ledger holding
+    ten sessions and $830.
+
+    Which scripts need it is derived from their source rather than listed here,
+    so a script that starts touching plugin state is covered without anyone
+    remembering to update this.
+    """
+    for indent, script in _SHELLS_OUT.findall(path.read_text(encoding="utf-8")):
+        source = (PLUGIN / "scripts" / script).read_text(encoding="utf-8")
+        if not any(name in source for name in _STATE_DIRS):
+            continue
+        assert "CLAUDE_PLUGIN_DATA" in indent, (
+            f"{path.parent.name} runs {script}, which reads plugin state, without passing"
+            " CLAUDE_PLUGIN_DATA — it will resolve a different directory than the hooks"
+        )
+
+
 def test_write_capable_agents_are_named_here_on_purpose():
     """Only `worker` may edit. A second write-capable agent is a decision, not
     an accident, and the parallel-edit safety was designed around exactly one."""

@@ -8,7 +8,7 @@ allowed-tools: Bash, Read
 # What has this actually cost?
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py"
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py"
 ```
 
 Present the numbers plainly, **and say what they miss.** Cost comes from real

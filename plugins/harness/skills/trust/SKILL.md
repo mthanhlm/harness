@@ -22,7 +22,7 @@ code with the user's full permissions. They wait for this.
 ## 1. Show what is being asked for
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" status
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" status
 ```
 
 **Show the user the actual commands, in full, before anything else.** That is the
@@ -47,7 +47,7 @@ approve this."
 ## 3. Approve, or do not
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" grant
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" grant
 ```
 
 The approval is recorded against the exact command set. If the repository later

@@ -68,7 +68,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
 Check whether this repo's own checks are actually running:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" status
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trust.py" status
 ```
 
 If commands are withheld, the plan's **Verification** section is about to promise

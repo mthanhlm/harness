@@ -126,6 +126,7 @@ def main() -> int:
         print(f"trust: approved {len(record['commands'])} command(s) for {root}:")
         for command in record["commands"]:
             print(f"  {command}")
+        print(f"  recorded in {trust_dir()}")
         return 0
 
     if action == "revoke":
@@ -141,6 +142,11 @@ def main() -> int:
         print(f"  [{mark}] {check.get('label')}: {' '.join(check.get('argv') or [])}")
     if not trusted:
         print("  run `/harness:trust` to approve these")
+    # Named because a grant written to the wrong data directory reports success
+    # and changes nothing: the hooks read `CLAUDE_PLUGIN_DATA`, a shell does not
+    # inherit it, and the fallback is a different directory entirely. Showing
+    # the path is what turns that from silent into obvious.
+    print(f"  reading {trust_dir()}")
     return 0
 
 
