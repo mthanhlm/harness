@@ -351,14 +351,69 @@ def approved_contract(session_id: str, scoped: list[str]) -> None:
     )
 
 
-def start_session(repo: Path, hook_env: dict, session_id: str = "sess") -> None:
+def start_session(
+    repo: Path, hook_env: dict, session_id: str = "sess", source: str = "startup"
+) -> None:
     """Run the real SessionStart hook, which is what anchors `base_commit`."""
     run_hook(
         "session_start.py",
-        {"session_id": session_id, "cwd": str(repo), "source": "startup"},
+        {"session_id": session_id, "cwd": str(repo), "source": source},
         hook_env,
         repo,
     )
+
+
+def head_of(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_the_scope_anchor_survives_a_compaction(data_dir, hook_env, tmp_path):
+    """A compaction must not move the fence's fixed point.
+
+    This is the case that decides whether the anchor is worth having, because a
+    long session is compacted several times and each one runs SessionStart
+    again. Re-anchoring there would make every out-of-scope change made *before*
+    the compaction match the new anchor exactly, and the fence would forgive all
+    of it — turning compaction into a laundry for scope creep, triggered by
+    nothing the model has to choose to do.
+
+    `/clear` is the opposite case and must re-anchor: the user asked for a clean
+    slate, and the same branch empties `files_touched`. An anchor left behind
+    there would be judging a fresh start against the previous session's tree.
+
+    Written after a mutation showed the whole distinction was unpinned: moving
+    the assignment out of the `fresh` branch passed 255 of 256 tests, and the
+    one failure was the version-bump check, which fires on any edit at all.
+    """
+    from state import load_session
+
+    def anchor() -> str:
+        return str(load_session("sess").get("base_commit") or "")
+
+    repo = plain_repo(tmp_path)
+    start_session(repo, hook_env)
+    anchored = anchor()
+    assert anchored == head_of(repo), "a fresh start anchors at the commit it opened on"
+
+    (repo / "a.json").write_text('{"a": 2}\n', encoding="utf-8")
+    for argv in (["git", "add", "-A"], ["git", "commit", "-qm", "work lands"]):
+        subprocess.run(argv, cwd=str(repo), check=True, capture_output=True)
+    moved = head_of(repo)
+    assert moved != anchored, "precondition: HEAD must have left the anchor behind"
+
+    for source in ("compact", "resume"):
+        start_session(repo, hook_env, source=source)
+        assert anchor() == anchored, (
+            f"{source} must keep the anchor the session opened with, not re-take it"
+        )
+
+    start_session(repo, hook_env, source="clear")
+    assert anchor() == moved, "clear is a clean slate, and re-anchors with the counters"
 
 
 def test_a_stray_that_was_put_back_is_not_reported(data_dir, hook_env, tmp_path):
