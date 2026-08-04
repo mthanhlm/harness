@@ -9,13 +9,27 @@ relevant belongs in a skill, which loads on demand.
 What genuinely cannot be inferred from the code, and so earns its place: the
 exact commands this repo is checked with, and the fact that some of them run
 automatically.
+
+One thing more, and only when the session did not start from scratch. A
+compaction throws the transcript away and a resume never had it; the gates do
+not notice, because the contract, the worker shards and the roadmap are all on
+disk and go on enforcing whatever was agreed. The model is the part that
+forgets, and it then pays to rediscover its own plan — which is how a context
+that was just compacted refills. So on `compact`, `resume` and `clear` the few
+facts it cannot cheaply reconstruct are handed back. They are read, never
+written: nothing here persists anything.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from pathlib import Path
 
+import contract as contract_mod
 import local_ignore
+import roadmap
+import session_end
 from detect import get_profile
 from state import (
     emit,
@@ -27,6 +41,18 @@ from state import (
     load_session,
     trace,
 )
+
+# Only these three arrive with the work already in progress. `startup` must be
+# excluded rather than merely uninteresting: session ids are reused, and a
+# contract file outlives the turn that wrote it, so injecting on startup hands a
+# brand-new session an old plan as though it were current.
+RESUMED_SOURCES = ("compact", "resume", "clear")
+
+# Roughly a page. Long enough for the plan, short enough that it does not become
+# the thing that gets skimmed past — which is the failure this module's docstring
+# is written against.
+MAX_LISTED = 12
+GOAL_LIMIT = 240
 
 
 def _describe(profile: dict) -> str:
@@ -70,6 +96,146 @@ def _describe(profile: dict) -> str:
     return "\n".join(lines)
 
 
+def _listed(entries: list[str], label: str) -> str:
+    """One bullet per entry, with an honest tail when the list is cut short.
+
+    Saying "and 34 more" costs six words and keeps the line true. Silently
+    showing the first twelve reads as a complete list, and a scope list that
+    looks complete but is not is the same failure as no scope list at all.
+    """
+    shown = entries[:MAX_LISTED]
+    lines = [f"  {label}:"] + [f"    - {entry}" for entry in shown]
+    if len(entries) > len(shown):
+        lines.append(f"    … and {len(entries) - len(shown)} more")
+    return "\n".join(lines)
+
+
+def _excluded(text: str) -> list[str]:
+    """The bullets a plan promised not to touch, one line each.
+
+    Deliberately not `session_end._not_changing`, which is the obvious reuse and
+    is wrong here. That function ends `[:MAX_DEFERRED]` with MAX_DEFERRED = 4,
+    because a roadmap entry wants the four most interesting deferrals in prose.
+    This wants every path, and taking the first four of ten silently — with no
+    tail, since the cap is applied before `_listed` can count what it lost —
+    hands back a list that reads complete and is not. That is the one failure
+    the roadmap says has already cost real licensing edits.
+
+    The two callers want different things from the same bullets, so they parse
+    differently: prose there, first lines here, because a path is the first
+    token of its bullet and the wrapped remainder is commentary.
+    """
+    scope = session_end._section(text, "Scope")
+    cutoff = contract_mod._NOT_CHANGING_RE.search(scope)
+    if not cutoff:
+        return []
+    return [
+        line.strip()[2:].strip()
+        for line in scope[cutoff.end():].splitlines()
+        if line.strip().startswith("- ")
+    ]
+
+
+def _carry_over(session_id: str, root, touched: list[str], blocked: dict) -> str:
+    """What the session agreed to, for a session that no longer remembers.
+
+    Every fact comes from a file some other hook already wrote, so this cannot
+    disagree with what the gates enforce — it is the same contract the scope
+    fence reads and the same shards the Stop gate counts.
+
+    The section helpers come from `session_end`, which already turns a contract
+    into prose for the roadmap. Restating them here would put a second parser on
+    the same hand-editable file, and the roadmap records what that costs: a fix
+    lands in one copy and not the other.
+    """
+    agreed = contract_mod.load(session_id)
+    if agreed is None:
+        return ""
+
+    text = agreed.text
+    goal = session_end._summary(session_end._section(text, "Goal"), GOAL_LIMIT)
+    scoped = agreed.scoped_files
+    excluded = _excluded(text)
+    if not (goal or scoped or excluded):
+        return ""  # A contract with nothing in it is not worth a single token.
+
+    # The plan names repo-relative paths; the session records absolute ones.
+    # This is only ever used to split a list for display, so unlike the scope
+    # fence it can afford to be approximate — the worst case is a file shown as
+    # not yet edited when it was.
+    prefix = f"{Path(root).as_posix().rstrip('/')}/"
+    seen = {p[len(prefix):] for p in (Path(t).as_posix() for t in touched) if p.startswith(prefix)}
+
+    lines = ["", "Carried over from before this session's context was shortened:"]
+    if not agreed.approved:
+        lines.append(
+            f"  This plan is {agreed.status} — **not approved**, so the scope fence is"
+            " inert. It is not enforcing the list below."
+        )
+    if goal:
+        lines.append(f"  Goal: {goal}")
+    if agreed.verdict and agreed.verdict != "unknown":
+        lines.append(f"  Verdict: {agreed.verdict}")
+
+    edited = [entry for entry in scoped if entry in seen]
+    remaining = [entry for entry in scoped if entry not in seen]
+    if edited:
+        lines.append(_listed(edited, "In scope, already edited"))
+    if remaining:
+        lines.append(_listed(remaining, "In scope, not yet edited"))
+    # Never trimmed, and never folded into the two lists above. The roadmap
+    # records real licensing edits landing because this list was mis-parsed, so
+    # it is the single line least safe to drop when something has to go.
+    if excluded:
+        lines.append(_listed(excluded, "Agreed NOT to change"))
+    if blocked:
+        lines.append(
+            f"  The end-of-turn gate is currently blocking on: {', '.join(sorted(set(blocked.values())))}."
+        )
+
+    newest = roadmap._entries(roadmap.read(Path(root)))
+    if newest:
+        # Capped like everything else here. `.harness/roadmap.md` is a file in
+        # the repository, invites hand-editing by its own header, and in a clone
+        # is written by whoever wrote the repo — so its length is not this
+        # module's to assume. Normally it is `## <date> — <plan title>`.
+        heading = newest[0].splitlines()[0].lstrip("# ").strip()[:GOAL_LIMIT]
+        if heading:
+            lines.append(f"  Newest roadmap entry: {heading}")
+
+    lines.append(
+        "  This is what you agreed to, not a suggestion. Re-read the files you"
+        " need, but do not re-plan work that is already scoped."
+    )
+    return "\n".join(lines)
+
+
+def head_commit(root: Path) -> str:
+    """The commit this session opens at, for the scope fence to compare against.
+
+    The fence needs a fixed point, and HEAD is not one. A model that edits a
+    file the plan never named and commits inside the turn moves HEAD onto its
+    own change, so anything comparing against HEAD finds no difference and the
+    stray is forgiven — the moving-target hole `stop_gate._vanished` already
+    gave up `cat-file -e HEAD:` to escape. Anchoring here costs one `rev-parse`
+    per session start and does not move for the rest of the session.
+
+    Empty on an unborn HEAD, outside a repository, or any git refusal. The fence
+    reads empty as "no fixed point, cannot prove", and reports.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
 def main() -> int:
     if gates_disabled():
         return 0
@@ -83,6 +249,12 @@ def main() -> int:
 
     session = load_session(event.get("session_id", "unknown"))
     session["repo_root"] = str(root)
+    # Read before the reset below, never after. `clear` takes the `fresh` branch
+    # — the user asked for a clean slate — but it is also a source the snapshot
+    # is rendered for, and reading the emptied values told the model every file
+    # it had already edited was still outstanding. Which is worse than silence:
+    # it is an instruction to redo finished work.
+    progress = (session.get("files_touched") or [], session.get("heavy_blocked") or {})
     # A resumed session keeps its counters; a fresh one starts clean. The same
     # distinction decides whether each writer's record is cleared: a resume can
     # land mid-fan-out, and wiping a running worker's record would leave its
@@ -93,15 +265,47 @@ def main() -> int:
         session["lines_changed"] = 0
         session["consecutive_stop_blocks"] = 0
         session["heavy_blocked"] = {}
+        # Which strays have been reported is per-contract, not per-session id,
+        # and session ids are reused. Left behind, a path reported under
+        # yesterday's plan stays exempt from the fence under today's — the same
+        # never-cleared latch this release exists to remove, one field over.
+        session["scope_reported"] = []
+        session["gave_up_at"] = None
+        # Re-anchored with the counters, and for the same reason: a fresh start
+        # means the fence judges what happens from here, not what the previous
+        # session left in the tree. A resume keeps the commit it already had —
+        # its edits are still in flight and still belong to that anchor.
+        session["base_commit"] = head_commit(root)
     save_session(session, reset=fresh)
+
+    context = _describe(profile)
+    carried = ""
+    # Deliberately not gated on `fresh`. `clear` resets the counters — the user
+    # asked for a clean slate — but it does not delete the contract, so the
+    # scope fence goes on enforcing a plan the model can no longer see. That
+    # asymmetry is the whole reason this exists, and it is sharpest here: the
+    # model edits a file, the gate blocks it as out of scope, and nothing in the
+    # session explains why.
+    if event.get("source") in RESUMED_SOURCES:
+        # A contract is a file a human edits, so it will eventually be malformed.
+        # `guard()` would swallow the traceback, but it would also drop the tool
+        # profile every session depends on — so this degrades rather than raises.
+        try:
+            carried = _carry_over(event.get("session_id", "unknown"), root, *progress)
+        except Exception:
+            carried = ""
+        if carried:
+            context = f"{context}\n{carried}"
+
     trace("SessionStart", event.get("session_id", "?"), "bootstrapped",
-          source=event.get("source"), agent=event.get("agent_type"))
+          source=event.get("source"), agent=event.get("agent_type"),
+          carried=bool(carried))
 
     emit(
         {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": _describe(profile),
+                "additionalContext": context,
             }
         }
     )

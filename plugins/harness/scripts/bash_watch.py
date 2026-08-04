@@ -36,12 +36,10 @@ from state import (
     gates_disabled,
     guard,
     read_event,
-    read_json,
     repo_root,
     session_state,
-    shard_path,
+    shard_update,
     trace,
-    write_json,
     writer_id,
 )
 
@@ -108,7 +106,25 @@ def snapshot(root: Path) -> dict[str, list[int]] | None:
 
 
 def _changed(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """Paths the command altered that are still dirty afterwards."""
     return sorted(rel for rel, mark in after.items() if before.get(rel) != mark)
+
+
+def _undone(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """Paths the command returned to their committed state.
+
+    `git checkout -- f`, `git stash` and `git clean` take a path out of
+    `git status` altogether, so it is absent from `after` — and `_changed`
+    above, which iterates `after` alone, counts it as nothing. That is still a
+    change, and it is the one that turns a green suite red whenever it reverts
+    half of a pair: undo the implementation, keep the test that calls it.
+
+    These count toward the end-of-turn gate and never toward `files_touched`.
+    Claiming them as touched would have the scope fence order the model to
+    revert a file that already matches HEAD — an unsatisfiable instruction, and
+    the exact harm the per-command sampling described above exists to avoid.
+    """
+    return sorted(set(before) - set(after))
 
 
 def _pre(root: Path, session_id: str, writer: str) -> int:
@@ -116,20 +132,15 @@ def _pre(root: Path, session_id: str, writer: str) -> int:
     sample = snapshot(root)
     if sample is None:
         return 0
-    path = shard_path(session_id, writer)
-    stored = read_json(path, default=None)
-    shard = stored if isinstance(stored, dict) else {}
-    shard["bash_pre"] = sample
-    write_json(path, shard)
+    with shard_update(session_id, writer) as shard:
+        shard["bash_pre"] = sample
     return 0
 
 
 def _post(root: Path, session_id: str, writer: str) -> int:
     """Record what the command actually changed."""
-    path = shard_path(session_id, writer)
-    stored = read_json(path, default=None)
-    shard = stored if isinstance(stored, dict) else {}
-    before = shard.get("bash_pre")
+    with shard_update(session_id, writer) as shard:
+        before = shard.pop("bash_pre", None)
     if not isinstance(before, dict):
         # Never sampled, so nothing can be attributed. Claiming the whole dirty
         # tree here is how the user's own uncommitted work gets reverted.
@@ -140,8 +151,10 @@ def _post(root: Path, session_id: str, writer: str) -> int:
     if after is None:
         return 0
 
-    shard.pop("bash_pre", None)
-    write_json(path, shard)
+    changed = _changed(before, after)
+    undone = _undone(before, after)
+    if not changed and not undone:
+        return 0
 
     # A path someone has already recorded is not claimed again. Two workers can
     # sample before the same change, and without this the second one takes the
@@ -149,18 +162,28 @@ def _post(root: Path, session_id: str, writer: str) -> int:
     from state import load_session
 
     known = {Path(p).as_posix() for p in (load_session(session_id).get("files_touched") or [])}
-    fresh = [rel for rel in _changed(before, after) if (root / rel).as_posix() not in known]
-    if not fresh:
-        return 0
+    fresh = [rel for rel in changed if (root / rel).as_posix() not in known]
 
     dropped = max(0, len(fresh) - MAX_NEW_FILES)
     recorded = [(root / rel).as_posix() for rel in fresh[:MAX_NEW_FILES]]
 
+    # `changed`, not `fresh`. The end-of-turn gate skips when its counters have
+    # not moved, and neither of the other two can move for a shell edit to a
+    # file this session already touched: `lines_changed` has one writer and it
+    # is `post_edit_check`, and every such path is filtered out of `fresh` just
+    # above. So the gate reported "already passed" over a red suite — the
+    # plugin's whole promise, inverted. This counter is the one thing that moves
+    # for that case, so it counts what the command touched, not what this writer
+    # gets to claim.
     with session_state(session_id, writer) as state:
-        state["files_touched"] = sorted(set(state.get("files_touched") or []) | set(recorded))
+        state["shell_changes"] = (
+            int(state.get("shell_changes") or 0) + len(changed) + len(undone)
+        )
+        if recorded:
+            state["files_touched"] = sorted(set(state.get("files_touched") or []) | set(recorded))
 
     trace("Bash", session_id, "recorded", agent=writer[:8],
-          files=len(recorded), dropped=dropped)
+          files=len(recorded), changed=len(changed), undone=len(undone), dropped=dropped)
 
     if dropped:
         from state import emit

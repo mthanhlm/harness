@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
+import detect
 from detect import PROFILE_VERSION, get_profile
 
 
@@ -235,6 +237,148 @@ def test_a_vendored_tool_is_preferred_over_a_global_one(data_dir, tmp_path):
     assert ruff, "a vendored ruff plus [tool.ruff] must be detected"
     assert all(c["argv"][0].startswith(str(root)) for c in ruff), (
         f"the vendored binary must win over any global one: {[c['argv'][0] for c in ruff]}"
+    )
+
+
+def _stub(root: Path, name: str) -> None:
+    vendored = root / ".venv" / "bin"
+    vendored.mkdir(parents=True, exist_ok=True)
+    (vendored / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (vendored / name).chmod(0o755)
+
+
+def _on_path(monkeypatch, tmp_path: Path, name: str) -> None:
+    """Put a stub `name` on PATH, where `_stub` cannot reach.
+
+    `_package_runner` resolves the package manager with `shutil.which` alone; it
+    does not consult the project's own `node_modules/.bin` the way `_local_bin`
+    does, so a vendored stub is invisible to it. Detection never *runs* what it
+    resolves — `detect.py` imports no subprocess module at all — so an `exit 0`
+    script is a complete stand-in.
+
+    This replaces a `skipif(not shutil.which("npm"))`. With npm absent the whole
+    cross-language fix went unpinned: restoring `_dedupe` to its kind-only
+    version passed the entire suite green on a machine with no node.
+    """
+    bindir = tmp_path / "path-stubs"
+    bindir.mkdir(exist_ok=True)
+    (bindir / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bindir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_a_mixed_python_and_typescript_repo_keeps_project_typecheck_and_lint(
+    data_dir, tmp_path, monkeypatch
+):
+    """The reproduced defect: Python's file-scope mypy/ruff used to delete
+    TypeScript's project-wide `tsc --noEmit` and `npm run lint`, because
+    `_dedupe` compared `kind` across languages with nothing to say the two
+    domains never overlap.
+
+    Every assertion names the exact label. Matching on `(kind, scope)` alone
+    cannot tell `tsc --noEmit` from `npm run typecheck`, so a wrong `extensions=`
+    on either one is invisible while the other survives — and both are project
+    typechecks that coexist here.
+    """
+    root = _repo(
+        tmp_path,
+        package__json=json.dumps(
+            {
+                "scripts": {
+                    "lint": "eslint .",
+                    "typecheck": "tsc --noEmit",
+                    "test": "vitest run",
+                    "build": "vite build",
+                }
+            }
+        ),
+        tsconfig__json="{}",
+        package__lock__json="{}",
+        pyproject__toml="[tool.mypy]\n[tool.ruff]\n",
+        mypy__ini="[mypy]\n",
+        ruff__toml="line-length = 100\n",
+    )
+    _stub(root, "mypy")
+    _stub(root, "ruff")
+    _stub(root, "tsc")  # `_local_bin` searches .venv/bin, so this is where tsc is found
+    _on_path(monkeypatch, tmp_path, "npm")
+
+    profile = get_profile(root, refresh=True)
+
+    kinds = [(c["kind"], c["scope"], c["label"]) for c in profile["checks"]]
+    assert ("typecheck", "file", "mypy") in kinds, "python's file-scope mypy must still be present"
+    assert ("lint", "file", "ruff check") in kinds, "python's file-scope ruff must still be present"
+    assert ("typecheck", "project", "tsc --noEmit") in kinds, (
+        f"a python file check must not delete TypeScript's own project typecheck: {kinds}"
+    )
+    assert ("typecheck", "project", "npm run typecheck") in kinds, (
+        f"a python file check must not delete the declared project typecheck: {kinds}"
+    )
+    assert ("lint", "project", "npm run lint") in kinds, (
+        f"a python file check must not delete the project-wide npm run lint: {kinds}"
+    )
+
+
+def test_a_pure_python_repo_still_drops_project_wide_lint(data_dir, tmp_path):
+    """The intent `_dedupe` exists for must survive: file-scope ruff already
+    covers the touched Python file, so a project-wide lint would only
+    re-report the rest of the repo's pre-existing problems.
+
+    The profile assertion below is the weaker half and cannot stand alone: no
+    Python project lint exists to be dropped today, so it holds for a reason
+    that has nothing to do with `_dedupe`. What it does catch is a project
+    check added later without `extensions=` — the default mistake in
+    `detect.py`, where every project check was written that way until the
+    cross-language fix. The precondition covers the other half by handing
+    `_dedupe` a case there *is* something to drop in.
+    """
+    file_lint = detect._check(
+        "lint", ["ruff", "check", "{file}"], scope="file", label="ruff check",
+        extensions=detect.PY_EXT,
+    )
+    project_lint = detect._check(
+        "lint", ["ruff", "check", "."], scope="project", label="ruff .",
+        extensions=detect.PY_EXT,
+    )
+    kept = [c["label"] for c in detect._dedupe([file_lint, project_lint])]
+    assert kept == ["ruff check"], (
+        f"precondition: _dedupe must drop a project check of the same language, got {kept}"
+    )
+
+    root = _repo(tmp_path, pyproject__toml="[tool.ruff]\n", ruff__toml="line-length = 100\n")
+    _stub(root, "ruff")
+
+    profile = get_profile(root, refresh=True)
+
+    assert any(c["kind"] == "lint" and c["scope"] == "file" for c in profile["checks"]), (
+        "precondition: file-scope ruff must be detected, or this asserts nothing"
+    )
+    assert not any(c["kind"] == "lint" and c["scope"] == "project" for c in profile["checks"]), (
+        "a pure python repo must not gain a redundant project-wide lint"
+    )
+
+
+def test_a_pure_typescript_repo_still_drops_project_wide_lint(data_dir, tmp_path, monkeypatch):
+    """The existing intent this plan must not break: file-scope eslint already
+    covers a touched TS file, so `npm run lint` re-reporting the rest of the
+    repo is exactly the redundancy `_dedupe` exists to remove.
+    """
+    root = _repo(
+        tmp_path,
+        package__json=json.dumps({"scripts": {"lint": "eslint ."}}),
+        package__lock__json="{}",
+        eslint__config__js="module.exports = {}\n",
+    )
+    _stub(root, "eslint")
+    _on_path(monkeypatch, tmp_path, "npm")
+
+    profile = get_profile(root, refresh=True)
+
+    assert any(c["kind"] == "lint" and c["scope"] == "file" for c in profile["checks"]), (
+        "precondition: file-scope eslint must be detected, or this asserts nothing"
+    )
+    assert not any(c["kind"] == "lint" and c["scope"] == "project" for c in profile["checks"]), (
+        "a pure typescript repo must still drop the redundant project-wide lint"
     )
 
 

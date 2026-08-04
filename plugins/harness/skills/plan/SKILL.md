@@ -232,6 +232,12 @@ On **Disagreement**: if you genuinely have none, write "None." and move on. Do n
 manufacture an objection to look rigorous — an invented concern trains the reader
 to skim, which is exactly when the real one gets missed.
 
+Check how many times the mechanism this plan touches has already been changed —
+`git log --oneline -- <path>` and `.harness/roadmap.md` if present. A third or
+later patch to the same mechanism is evidence the design is wrong, not that
+this patch is wrong; surface the count in the Verdict rather than waiting for
+someone to ask the architect.
+
 ## Stage 2b — Have the plan argued against
 
 Once the plan is written and **before** presenting it, if it spans more than
@@ -302,31 +308,8 @@ into.
 If the review found nothing, say so plainly. Sound work reviewing clean is a
 result.
 
-Then write down what the next session would otherwise have to rediscover:
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" append "<one-line title>" <<'EOF'
-- decided: <a choice made here, and why, in one line>
-- deferred: <something real that was found and not fixed, and why>
-EOF
-```
-
-**Decisions and deferred work only.** Not what happened — a session narrative
-rots into a wall nobody reads, and then the roadmap is worth nothing to the
-session that needed it. The test is whether it would change what someone does
-next. "Rewrote the parser" would not; "chose to withhold repo-authored commands
-rather than allowlist them, because an allowlist has to contain npm" would.
-
-Nothing worth recording is a legitimate answer on a small change. Say so and
-skip it rather than padding the file.
-
-## When to stop and hand back
-
-Say so plainly rather than grinding, when:
-
-- the plan turns out to be wrong once you are inside the code
-- the same check fails three times and your fixes are not converging
-- the work needs a design decision the plan does not settle
-
-Stopping after two minutes is cheap. Twenty turns of not converging is not, and it
-is the exact waste this plugin exists to remove.
+The roadmap writes itself when the session ends — `session_end.py` derives the
+entry from the contract's Verdict, Disagreement and "Explicitly NOT changing"
+sections. That is worth knowing while you write the plan rather than after: those
+three sections are what the next session inherits, so a Disagreement recorded as
+"None." and an empty exclusion list leave it nothing.

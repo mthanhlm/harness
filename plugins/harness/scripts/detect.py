@@ -39,7 +39,7 @@ from state import profiles_dir, read_json, repo_key, write_json
 FAST_KINDS = ("syntax", "format", "lint", "typecheck")
 HEAVY_KINDS = ("typecheck", "lint", "test", "build")
 
-PROFILE_VERSION = 9
+PROFILE_VERSION = 10
 
 # Presence or content of these decides the profile, and changes to any of them
 # invalidate the cache.
@@ -192,6 +192,7 @@ def _declared_script_checks(root: Path, pkg: dict[str, Any]) -> list[dict[str, A
                 scope="project",
                 label=f"{Path(runner[0]).name} run {name}",
                 blocking=blocking,
+                extensions=WEB_EXT,
             )
         )
     return checks
@@ -270,7 +271,15 @@ def _node_project_checks(root: Path) -> list[dict[str, Any]]:
     if not (root / "tsconfig.json").is_file():
         return []
     if tsc := _local_bin(root, "tsc") or shutil.which("tsc"):
-        return [_check("typecheck", [tsc, "--noEmit"], scope="project", label="tsc --noEmit")]
+        return [
+            _check(
+                "typecheck",
+                [tsc, "--noEmit"],
+                scope="project",
+                label="tsc --noEmit",
+                extensions=WEB_EXT,
+            )
+        ]
     return []
 
 
@@ -326,7 +335,9 @@ def _python_checks(root: Path) -> list[dict[str, Any]]:
         )
 
     if _has_pytest(root) and (pytest := _local_bin(root, "pytest") or shutil.which("pytest")):
-        checks.append(_check("test", [pytest, "-q", "-x"], scope="project", label="pytest"))
+        checks.append(
+            _check("test", [pytest, "-q", "-x"], scope="project", label="pytest", extensions=PY_EXT)
+        )
     return checks
 
 
@@ -358,9 +369,9 @@ def _go_checks() -> list[dict[str, Any]]:
     if not go:
         return []
     checks = [
-        _check("build", [go, "build", "./..."], scope="project", label="go build"),
-        _check("lint", [go, "vet", "./..."], scope="project", label="go vet"),
-        _check("test", [go, "test", "./..."], scope="project", label="go test"),
+        _check("build", [go, "build", "./..."], scope="project", label="go build", extensions=(".go",)),
+        _check("lint", [go, "vet", "./..."], scope="project", label="go vet", extensions=(".go",)),
+        _check("test", [go, "test", "./..."], scope="project", label="go test", extensions=(".go",)),
     ]
     if gofmt := shutil.which("gofmt"):
         checks.insert(
@@ -382,9 +393,18 @@ def _rust_checks() -> list[dict[str, Any]]:
     if not cargo:
         return []
     return [
-        _check("format", [cargo, "fmt", "--check"], scope="project", label="cargo fmt", blocking=False),
-        _check("typecheck", [cargo, "check", "--quiet"], scope="project", label="cargo check"),
-        _check("test", [cargo, "test", "--quiet"], scope="project", label="cargo test"),
+        _check(
+            "format",
+            [cargo, "fmt", "--check"],
+            scope="project",
+            label="cargo fmt",
+            blocking=False,
+            extensions=(".rs",),
+        ),
+        _check(
+            "typecheck", [cargo, "check", "--quiet"], scope="project", label="cargo check", extensions=(".rs",)
+        ),
+        _check("test", [cargo, "test", "--quiet"], scope="project", label="cargo test", extensions=(".rs",)),
     ]
 
 
@@ -427,17 +447,30 @@ def _fingerprint(root: Path) -> str:
 
 
 def _dedupe(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop a project check when a per-file check of the same kind exists.
+    """Drop a project check when a per-file check of the same kind *and domain* exists.
 
     Running the whole test suite per file would be absurd, and running project
     lint when we already lint the touched file just re-reports the rest of the
-    repo's pre-existing problems.
+    repo's pre-existing problems. But that only holds within one language: a
+    Python file check must not silence a TypeScript project check of the same
+    kind, or vice versa — they cover disjoint files and neither substitutes for
+    the other.
+
+    An empty extension set on a project check means "no declared domain", which
+    is treated as *not* overlapping anything: a check that never said what it
+    covers must not be silently deleted by an unrelated language's file check.
+    An empty set on the file-check side is likewise inert, for the same reason.
     """
-    per_file_kinds = {c["kind"] for c in checks if c["scope"] == "file"}
+    file_checks = [c for c in checks if c["scope"] == "file"]
     out = []
     for check in checks:
-        if check["scope"] == "project" and check["kind"] in per_file_kinds and check["kind"] != "test":
-            continue
+        if check["scope"] == "project" and check["kind"] != "test" and check["extensions"]:
+            project_ext = set(check["extensions"])
+            if any(
+                fc["kind"] == check["kind"] and project_ext & set(fc["extensions"])
+                for fc in file_checks
+            ):
+                continue
         out.append(check)
     return out
 
@@ -544,7 +577,6 @@ def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:
             {c["kind"] for c in profile["checks"] if c.get("kind") in kinds}
         )
         profile["checks"] = [c for c in profile["checks"] if c.get("kind") not in kinds]
-    profile["has_override"] = True
 
 
 def get_profile(root: Path, *, refresh: bool = False) -> dict[str, Any]:

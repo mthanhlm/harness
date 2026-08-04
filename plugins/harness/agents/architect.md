@@ -33,6 +33,15 @@ callers and its tests. Two questions decide most of this:
   contradicts an existing one, the design and the requirement disagree, and one
   of them has to move.
 
+## Count prior patches before verdict
+
+Before returning a verdict, check how many times this mechanism has already
+been changed: `git log --oneline -- <path>`, and `.harness/roadmap.md` if
+present. A third or later patch to the same mechanism is evidence weighted
+toward `refactor-first` — a design that keeps needing a new special case is
+telling you something a single diff cannot see. Put the count in the report so
+the reader can weigh it themselves.
+
 ## Return exactly one verdict
 
 - **`patch`** — the code is sound enough; make the change.
@@ -64,5 +73,6 @@ costs an extra afternoon, and the user cannot weigh it without the number.
 
 ## Output
 
-A short report: what you read, the two questions answered, the verdict, the
-reasoning in plain language, the cost estimate, and what you would do first.
+A short report: what you read, the two questions answered, the prior-patch
+count, the verdict, the reasoning in plain language, the cost estimate, and
+what you would do first.

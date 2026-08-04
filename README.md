@@ -261,36 +261,26 @@ the cache-read and cache-write split, which is where most of the money usually
 is.
 
 For the harder question — whether a cheaper model with the harness beats an
-expensive one without it — `evals/ab.py` runs the same task with and without the
-plugin against a fresh fixture, and grades the result with tests the model never
-saw:
+expensive one without it — the honest answer is that nothing in this repo
+currently measures it. An earlier A/B rig (`evals/ab.py`) ran the same task
+with and without the plugin and graded the result with tests the model never
+saw, but it drove both arms through `claude -p`: headless mode cannot approve a
+plan, and `implement` hard-stops without `status: approved`, so the crew never
+launched and no subagent ran in either arm. Its one recorded result — harness
+$0.242 vs bare $0.216, a 12% delta — is itself the proof: one Opus `architect`
+call alone costs $0.146, so no fan-out happened in either run. It has been
+deleted rather than kept as a false measurement. Any future answer to this
+question has to come from the ledger on real sessions — see `/harness:report`
+— not from a synthetic rig.
 
-```bash
-python3 plugins/harness/evals/ab.py --model claude-sonnet-5 --runs 3
-python3 plugins/harness/evals/ab.py --model claude-opus-5   --runs 3
-```
+The eval cases it would have run (`evals/cases/`) stay, because they discriminate
+on their own terms and are checked without spending on a model:
+`tests/test_eval_cases.py` proves for every case that the visible tests pass on
+the pristine fixture and the hidden grader fails on it, so a model that did
+nothing cannot pass by accident.
 
-**First measured result** (`slugify` case, Sonnet 5, 1 run per arm): both arms
-passed; harness $0.242, bare $0.216. So on this task the harness cost about 12%
-and changed nothing — the case is too easy to tell the arms apart. That is a real
-finding about the *case*, not evidence either way about the plugin.
-
-`dynamic-caller` is the second case, built to discriminate: a handler reached
-only through a string-keyed dispatch table, so the call site contains no
-occurrence of the name being called. A bare model greps, patches the direct
-callers, and misses the dispatched one; the hidden grader goes through the
-dispatch path. **Written but not yet run** — that costs real money and is a
-decision, not a detail.
-
-An eval case is only worth running if its grader fails on unmodified code, and
-until now nothing checked that: `pytest.ini` sets `testpaths` to the test
-directory, so **nothing under `evals/cases/` was ever collected** — the whole
-suite ran without a single assertion touching an eval. `tests/test_eval_cases.py`
-closes it, proving for every case that the visible tests pass on the pristine
-fixture and the grader fails on it. `slugify` had never been checked either.
-
-`claude plugin eval --ablation with-without` does the same job with more
-machinery, and is worth switching to if early access opens up on this account.
+`claude plugin eval --ablation with-without` would do the A/B job properly, and
+is worth switching to if early access opens up on this account.
 
 ## Known limits
 
@@ -315,6 +305,8 @@ machinery, and is worth switching to if early access opens up on this account.
   several times is summed that many times over. Subagent cost — reviewers,
   judgement agents and workers — is counted, and reported apart from the lead's
   as `delegated to subagents`.
-- **`plugin eval` is gated to early access**, so `evals/ab.py` stands in for it.
+- **`plugin eval` is gated to early access.** No stand-in for it currently
+  exists — see "Measuring whether it works" for why the earlier attempt was
+  removed rather than kept.
 - **Rust and Go support is written but untested** — neither toolchain is
   installed here. TypeScript and Python are verified against real repos.

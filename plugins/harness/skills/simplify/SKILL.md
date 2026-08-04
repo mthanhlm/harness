@@ -40,40 +40,17 @@ it: a helper contorted to serve two callers, with three boolean parameters to
 switch between them, is worse than two clear functions. Say so when that is the
 honest answer.
 
-## 3. Abstractions with one caller
+## 3. Abstractions, defensive code and comments
 
-An interface with one implementation. A factory that makes one thing. A base
-class with one subclass. A config option with one value. A wrapper that forwards
-and changes nothing.
+`agents/reviewer-bloat.md` already states the criteria for one-caller
+abstractions, defensive code against the impossible, and comments that restate
+or go stale — read it rather than a second copy of the same rule here. The
+difference is that this pass can act: where it finds one of those, inline the
+abstraction, remove the impossible check (after confirming the case really
+cannot occur — trace where the value comes from, do not assume), and fix or
+delete the comment. `reviewer-bloat` only reports; you edit.
 
-Each was written for a future that usually arrives wanting something else.
-Inline them. The abstraction is cheap to reintroduce when a second caller
-genuinely appears, and expensive to read every day until then.
-
-## 4. Defensive code against the impossible
-
-A null check on something that cannot be null. A `try` around code that cannot
-raise. Validation of a value already validated one frame up. This reads as care
-and functions as noise — and worse, it camouflages the checks that are actually
-load-bearing, because now every check looks equally routine.
-
-Remove it only after confirming the case really cannot occur. Trace where the
-value comes from rather than assuming.
-
-## 5. Comments
-
-The rule: a comment explains **why**, never **what**.
-
-Delete: comments restating the line below them, commented-out code, and any
-comment left from an earlier version that no longer matches. A stale comment is
-worse than no comment, because it is believed.
-
-Keep, and add where missing: the non-obvious reason. `// the API returns page 0
-as page 1, so subtract` is the most valuable line in a file. Do not strip
-comments for the sake of brevity — the goal is a higher ratio of load-bearing
-ones, not fewer.
-
-## 6. Documentation that is now wrong
+## 4. Documentation that is now wrong
 
 Anything the change made false: docstrings with parameters that no longer exist,
 READMEs describing an old command, examples that would fail if run, a stale
@@ -85,7 +62,7 @@ commands or public behaviour.
 Only fix what this change broke. Pre-existing gaps elsewhere are not this diff's
 problem, and pulling them in is exactly the scope creep worth avoiding.
 
-## 7. Verify, then report
+## 5. Verify, then report
 
 Deletion is a change like any other. Run the project's checks afterwards and
 confirm they still pass — a simplification that breaks a caller cost more than

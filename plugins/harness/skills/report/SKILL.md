@@ -49,15 +49,26 @@ Also worth naming when it shows up:
 
 ## Answering "would a cheaper model have worked?"
 
-The ledger cannot answer that on its own, and it should not pretend to. What
-answers it is an A/B against the same cases:
+Answer from the ledger's phase split, not from a synthetic run — and be honest
+about what it can and cannot settle.
 
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/evals/ab.py" --model claude-sonnet-5 --runs 3
-python3 "${CLAUDE_PLUGIN_ROOT}/evals/ab.py" --model claude-opus-5   --runs 3
-```
+What it can settle: whether the phase split is happening at all. If the
+"delegated to subagents" figure is near zero, every task is running on the
+lead's model regardless of what the agents declare, and that is worth fixing
+before asking about cheaper models at all. If it is non-trivial, check which
+agents are eating it — `report`'s own split by model shows whether Opus work
+(`architect`, the correctness/security/tests reviewers, `refuter`) is
+proportionate to how rarely those agents should run.
 
-Each run scores the same cases with the plugin and without it. If Sonnet with
-the harness scores at or above Opus without it, the plugin has paid for itself
-and the default model can change. If it has not, say so — the point of measuring
-is to be able to be wrong.
+What it cannot settle: whether a *specific* agent would do as well on a
+cheaper model. The ledger records what happened, not what would have happened
+on a different model — that needs an actual run on that model, compared
+against real outcomes (did the gates catch the same things, did review find
+the same issues), not a synthetic benchmark.
+
+Also worth saying plainly, because it bounds how much this question is worth
+chasing: measured over 211 sessions, 83.5% of lifetime spend is context on the
+lead session, and subagents are only 6.3% of it. Even a perfect swap of every
+agent to a cheaper model caps out near 2% of total cost. The lever that
+actually moves the number is context management on the lead session — an
+`autoCompactWindow` setting, not a model choice.

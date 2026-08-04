@@ -242,14 +242,17 @@ def shard_path(session_id: str, writer: str) -> Path:
 
 
 # Summed or unioned across writers. Everything else is one fact per session.
-ACCUMULATORS = ("files_touched", "lines_changed", "checks")
+ACCUMULATORS = ("files_touched", "lines_changed", "checks", "shell_changes")
 
 DEFAULT_SESSION: dict[str, Any] = {
     "session_id": "",
     "repo_root": "",
+    # The commit this session opened at. The scope fence compares against it
+    # rather than HEAD, which moves when the model commits inside a turn.
+    "base_commit": "",
     "files_touched": [],
     "lines_changed": 0,
-    "contract": None,
+    "shell_changes": 0,
     "consecutive_stop_blocks": 0,
     "edit_gate_prompted": False,
     "checks": {"run": 0, "failed": 0},
@@ -269,7 +272,74 @@ def writer_id(event: dict[str, Any]) -> str:
 
 
 def _blank_accumulators() -> dict[str, Any]:
-    return {"files_touched": [], "lines_changed": 0, "checks": {"run": 0, "failed": 0}}
+    return {
+        "files_touched": [],
+        "lines_changed": 0,
+        "shell_changes": 0,
+        "checks": {"run": 0, "failed": 0},
+    }
+
+
+@contextmanager
+def _exclusive(path: Path) -> Iterator[None]:
+    """Serialise a read-modify-write of `path` against other processes.
+
+    Every accumulator here is stored as a total, not as an event, so recording a
+    delta means read, add, write. Two processes doing that at once both read the
+    same total and the second overwrites the first: measured at 471 of 600
+    increments lost across twelve processes sharing one writer id. What is lost
+    is `files_touched`, which is what the scope fence and the end-of-turn gate
+    read — so a lost update is an edit no gate ever sees, reported as clean.
+
+    The lock is a file of its own rather than the shard, because `write_json`
+    replaces the shard's inode and a lock held on the old one guards nothing.
+
+    Degrading is deliberate. On a platform without `fcntl`, or a filesystem that
+    refuses the lock, this yields anyway and the caller behaves exactly as it did
+    before — losing an update is bad, and a hook that cannot record at all is
+    worse.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+
+    handle = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = (path.parent / f"{path.name}.lock").open("a+", encoding="utf-8")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        if handle is not None:
+            handle.close()
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+@contextmanager
+def shard_update(session_id: str, writer: str) -> Iterator[dict[str, Any]]:
+    """Yield one writer's shard for mutation, under an exclusive lock.
+
+    `session_state` records accumulator deltas through this; `bash_watch` parks
+    its pre-command sample in the same file. Both are read-modify-writes on one
+    path, so both need the same lock or the one without it silently reverts the
+    one with it.
+    """
+    path = shard_path(session_id, writer)
+    with _exclusive(path):
+        stored = read_json(path, default=None)
+        shard = stored if isinstance(stored, dict) else {}
+        yield shard
+        write_json(path, shard)
 
 
 def _merge_shards(session_id: str) -> dict[str, Any] | None:
@@ -291,6 +361,7 @@ def _merge_shards(session_id: str) -> dict[str, Any] | None:
             continue
         files.update(stored.get("files_touched") or [])
         merged["lines_changed"] += int(stored.get("lines_changed") or 0)
+        merged["shell_changes"] += int(stored.get("shell_changes") or 0)
         checks = stored.get("checks")
         if isinstance(checks, dict):
             for key in ("run", "failed"):
@@ -372,6 +443,7 @@ def session_state(session_id: str, writer: str = "main") -> Iterator[dict[str, A
     session = load_session(session_id)
     files_before = set(session.get("files_touched") or [])
     lines_before = int(session.get("lines_changed") or 0)
+    shell_before = int(session.get("shell_changes") or 0)
     checks_before = dict(session.get("checks") or {})
     scalars_before = json.loads(
         json.dumps({k: v for k, v in session.items() if k not in ACCUMULATORS})
@@ -379,22 +451,27 @@ def session_state(session_id: str, writer: str = "main") -> Iterator[dict[str, A
 
     yield session
 
-    stored = read_json(shard_path(session_id, writer), default=None)
-    own = stored if isinstance(stored, dict) else _blank_accumulators()
-
-    own["files_touched"] = sorted(
-        set(own.get("files_touched") or []) | (set(session.get("files_touched") or []) - files_before)
-    )
-    own["lines_changed"] = int(own.get("lines_changed") or 0) + (
-        int(session.get("lines_changed") or 0) - lines_before
-    )
-    own_checks = own.setdefault("checks", {"run": 0, "failed": 0})
-    checks_now = session.get("checks") or {}
-    for key in ("run", "failed"):
-        own_checks[key] = int(own_checks.get(key) or 0) + (
-            int(checks_now.get(key) or 0) - int(checks_before.get(key) or 0)
+    # The lock is taken here and not around the yield. `stop_gate` holds this
+    # context open across the whole project suite, so locking the body would
+    # stall every other hook for the length of a test run. Only the delta needs
+    # to be atomic, and the delta is already computed from values read before
+    # the yield.
+    with shard_update(session_id, writer) as own:
+        own["files_touched"] = sorted(
+            set(own.get("files_touched") or []) | (set(session.get("files_touched") or []) - files_before)
         )
-    write_json(shard_path(session_id, writer), own)
+        own["lines_changed"] = int(own.get("lines_changed") or 0) + (
+            int(session.get("lines_changed") or 0) - lines_before
+        )
+        own["shell_changes"] = int(own.get("shell_changes") or 0) + (
+            int(session.get("shell_changes") or 0) - shell_before
+        )
+        own_checks = own.setdefault("checks", {"run": 0, "failed": 0})
+        checks_now = session.get("checks") or {}
+        for key in ("run", "failed"):
+            own_checks[key] = int(own_checks.get(key) or 0) + (
+                int(checks_now.get(key) or 0) - int(checks_before.get(key) or 0)
+            )
 
     # Per-session facts are only ever set from the main thread, so writing them
     # unconditionally would let a worker put a stale copy back. Write on change.

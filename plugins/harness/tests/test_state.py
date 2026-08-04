@@ -44,6 +44,71 @@ def test_concurrent_writers_do_not_lose_edits(data_dir, run_child):
     assert session["checks"]["run"] == WRITERS * 2
 
 
+SAME_WRITER_PROCS = 12
+SAME_WRITER_STEPS = 50
+
+# One writer id, many processes. The test above hands each child a distinct id,
+# so every one writes a shard of its own and nothing *can* be lost — which is
+# exactly why it stayed green while this was broken.
+SAME_WRITER = f"""
+from state import session_state
+for _ in range({SAME_WRITER_STEPS}):
+    with session_state("sess", writer="main") as s:
+        s["lines_changed"] = int(s.get("lines_changed") or 0) + 1
+        s["shell_changes"] = int(s.get("shell_changes") or 0) + 1
+"""
+
+
+def test_one_writer_running_more_than_once_at_a_time_loses_nothing(data_dir, run_child):
+    """Recording a delta is a read-modify-write, and it needs a lock.
+
+    One session id does not mean one process. Hooks fire per tool call, Claude
+    Code issues tool calls in parallel, and `bash_watch` writes to the same
+    shard from both its Pre and its Post hook — so two processes carrying the
+    same writer id read the same total and the second one overwrites the first.
+
+    Measured before the fix: 129 of 600 increments survived. What is being lost
+    is `files_touched`, which is what the scope fence and the end-of-turn gate
+    read, so a lost update is an edit no gate ever sees and the turn is reported
+    clean. Counters stand in for it here only because an integer makes the size
+    of the loss visible.
+    """
+    procs = [run_child(SAME_WRITER) for _ in range(SAME_WRITER_PROCS)]
+    for proc in procs:
+        assert proc.wait() == 0, proc.stderr.read().decode() if proc.stderr else ""
+
+    session = load_session("sess")
+    expected = SAME_WRITER_PROCS * SAME_WRITER_STEPS
+    assert session["lines_changed"] == expected, f"lost {expected - session['lines_changed']}"
+    assert session["shell_changes"] == expected, f"lost {expected - session['shell_changes']}"
+
+
+def test_a_counter_only_update_leaves_the_session_scalars_alone(data_dir):
+    """`ACCUMULATORS` decides per-writer counter from per-session fact.
+
+    Take `shell_changes` out of that tuple and the counter's *value* still comes
+    out right — `_blank_accumulators` and `_merge_shards` both name it outright
+    — which is why every assertion above stays green either way. What changes is
+    who writes the session file: `bash_watch`, which on most commands mutates
+    nothing else, becomes a writer of the whole scalar record, rewriting it from
+    a snapshot it read before its own work. The Stop hook holds that same file
+    open across the entire project suite, so the window is seconds wide.
+    """
+    with session_state("sess", writer="main") as session:
+        session["edit_gate_prompted"] = True
+
+    scalars = data_dir / "sessions" / "sess.json"
+    before = json.loads(scalars.read_text(encoding="utf-8"))
+
+    with session_state("sess", writer="w1") as session:
+        session["shell_changes"] = int(session.get("shell_changes") or 0) + 3
+
+    assert json.loads(scalars.read_text(encoding="utf-8")) == before, (
+        "a counter-only update must not rewrite the session's shared facts"
+    )
+    assert load_session("sess")["shell_changes"] == 3
+
+
 def test_writer_records_only_its_own_delta(data_dir):
     """A writer must not re-record what it merely read from another writer.
 
