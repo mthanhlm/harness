@@ -65,11 +65,21 @@ def main() -> int:
 
     summary = [ln.strip() for ln in (proc.stdout or "").splitlines() if "nodes" in ln]
     print(f"codegraph: indexed {root}" + (f" — {summary[-1]}" if summary else ""))
-    print(
-        "codegraph: `.codegraph/` is new and untracked; its contents are"
-        " self-ignored, so either commit `.codegraph/.gitignore` or add"
-        " `.codegraph/` to the repo's .gitignore."
-    )
+
+    # What actually happened, rather than a chore that is both unnecessary and
+    # contrary to the plugin's own design. This used to tell the user to add
+    # `.codegraph/` to `.gitignore` — a *tracked* file, which is precisely the
+    # pollution `local_ignore.py` exists to avoid, and its docstring says so.
+    # `local_ignore.ensure` has already excluded it locally at session start, so
+    # the advice was asking for a commit nobody needed and one the rest of the
+    # plugin was written to prevent.
+    import local_ignore
+
+    local_ignore.ensure(root)  # idempotent; session start has normally done it already
+    if local_ignore.excluded(root, ".codegraph/"):
+        print("codegraph: excluded locally via .git/info/exclude — nothing to commit")
+    else:
+        print("codegraph: could not exclude `.codegraph/` locally — add it to .gitignore yourself")
     return 0
 
 

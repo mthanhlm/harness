@@ -170,3 +170,39 @@ def test_a_rename_records_the_destination(data_dir, git_repo, hook_env):
     run_hook("bash_watch.py", bash(git_repo), hook_env, git_repo)
 
     assert "renamed.py" in touched()
+
+
+def test_a_command_that_failed_still_had_its_writes_recorded(data_dir, git_repo, hook_env):
+    """`PostToolUse` fires only on success, and a failing command writes anyway.
+
+    A build that emits `dist/` and then fails its own check, a `sed -i` that dies
+    on the third file having rewritten the first two. Without the failure event
+    nothing records them and nothing is left behind either: the parked
+    pre-command sample is overwritten by the next command, so the files enter no
+    gate at all and the end-of-turn check reports over a tree it never saw.
+    """
+    before(git_repo, hook_env)
+    (git_repo / "a.py").write_text("value = 2\n", encoding="utf-8")
+
+    event = bash(git_repo, phase="PostToolUseFailure")
+    event["error"] = "Exit code 1\nsed: can't read c.py: No such file or directory"
+    run_hook("bash_watch.py", event, hook_env, git_repo)
+
+    assert "a.py" in touched(), "a failing command's writes reached no gate"
+
+
+def test_a_powershell_command_is_watched_too(data_dir, git_repo, hook_env):
+    """On Windows without Git Bash, Claude Code enables the PowerShell tool and
+    does not register Bash at all, so every shell command arrives under the other
+    name. A guard naming only `Bash` drops all of them while the matcher in
+    `hooks.json` is what looks like the wiring."""
+    pre = bash(git_repo, phase="PreToolUse")
+    pre["tool_name"] = "PowerShell"
+    pre["tool_input"] = {"command": "Set-Content a.py 'value = 2'"}
+    run_hook("bash_watch.py", pre, hook_env, git_repo)
+
+    (git_repo / "a.py").write_text("value = 2\n", encoding="utf-8")
+    post = dict(pre, hook_event_name="PostToolUse")
+    run_hook("bash_watch.py", post, hook_env, git_repo)
+
+    assert "a.py" in touched(), "a PowerShell edit reached no gate"

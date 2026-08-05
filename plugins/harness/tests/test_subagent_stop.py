@@ -109,3 +109,57 @@ def test_a_file_outside_the_repo_is_not_checked(data_dir, git_repo, hook_env, tm
     write_json(shard_path("sess", "worker-b"), {"files_touched": [str(link)]})
 
     assert run_hook(SCRIPT, payload("worker-b", git_repo), hook_env, git_repo) == {}
+
+
+def _transcripts(tmp_path: Path, lens_in_agent: bool) -> tuple[str, str]:
+    """A main-session transcript and the agent's own, in the real layout.
+
+    Claude Code writes the subagent's transcript under `<session>/subagents/`,
+    and hands `SubagentStop` both paths — `transcript_path` for the session,
+    `agent_transcript_path` for the agent.
+    """
+    import json
+
+    main = tmp_path / "sess.jsonl"
+    main.write_text(json.dumps({"type": "user", "message": {"content": "review"}}), encoding="utf-8")
+
+    own = tmp_path / "sess" / "subagents"
+    own.mkdir(parents=True)
+    agent = own / "agent-1.jsonl"
+    read = "/p/references/lenses/lens-security.md" if lens_in_agent else "/repo/src/app.ts"
+    agent.write_text(json.dumps({
+        "type": "assistant",
+        "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": read}}]},
+    }), encoding="utf-8")
+    return str(main), str(agent)
+
+
+def test_a_reviewer_that_read_its_lens_is_let_through(data_dir, git_repo, hook_env, tmp_path):
+    """End to end, because the two halves of this were wired to different files.
+
+    The gate read `event["transcript_path"]` — the *main session's* transcript.
+    A subagent's tool calls are never in it; they are in `agent_transcript_path`.
+    So the evidence half of the gate was dead, and a reviewer that did exactly
+    what the catalogue asked was blocked anyway, with a message telling it to do
+    the thing it had just done.
+    """
+    main, agent = _transcripts(tmp_path, lens_in_agent=True)
+    event = payload("reviewer-1", git_repo)
+    event.update(agent_type="harness:reviewer-security", transcript_path=main, agent_transcript_path=agent)
+
+    assert run_hook(SCRIPT, event, hook_env, git_repo) == {}, (
+        "blocked a reviewer for not reading a lens it read"
+    )
+
+
+def test_a_reviewer_that_read_no_lens_is_still_blocked(data_dir, git_repo, hook_env, tmp_path):
+    """The other direction, so the test above cannot pass by the gate having been
+    switched off — which is the cheaper way to make it green."""
+    main, agent = _transcripts(tmp_path, lens_in_agent=False)
+    event = payload("reviewer-2", git_repo)
+    event.update(agent_type="harness:reviewer-security", transcript_path=main, agent_transcript_path=agent)
+
+    response = run_hook(SCRIPT, event, hook_env, git_repo)
+
+    assert response.get("decision") == "block"
+    assert "no domain knowledge" in response.get("reason", "")

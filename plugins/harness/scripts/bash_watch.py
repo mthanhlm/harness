@@ -23,6 +23,18 @@ Two further consequences of doing it that way:
 - **No sample, no claim.** If the pre-command sample is missing — gates switched
   on mid-session, a resumed session, a hook that failed — nothing is recorded.
   Recording everything would be the flood this exists to prevent.
+
+Two things it is wired to see and one it cannot:
+
+- `PostToolUse` **and** `PostToolUseFailure`, because a command that exits
+  non-zero has usually still written something — a build that emits `dist/` and
+  then fails its own check, a `sed -i` that dies on the third file having
+  rewritten the first two. Without the failure event the pre-command sample is
+  simply overwritten by the next command, and those files enter no gate at all.
+- A command run with `run_in_background` returns as soon as it is launched, so
+  the post-sample is taken before it has written anything. Those changes are
+  invisible here. Said out loud rather than left to be discovered: the gate that
+  reports at end of turn is the backstop for them.
 """
 
 from __future__ import annotations
@@ -205,7 +217,11 @@ def main() -> int:
         return 0
 
     event = read_event()
-    if event.get("tool_name") != "Bash":
+    # Both shells. On Windows without Git Bash, Claude Code enables the
+    # PowerShell tool and does not register Bash at all, so every shell command
+    # arrives under the other name — and a guard naming only `Bash` drops all of
+    # them while the matcher in `hooks.json` is what looks like the wiring.
+    if event.get("tool_name") not in ("Bash", "PowerShell"):
         return 0
 
     session_id = event.get("session_id", "unknown")

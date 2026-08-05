@@ -275,10 +275,9 @@ def test_a_mixed_python_and_typescript_repo_keeps_project_typecheck_and_lint(
     `_dedupe` compared `kind` across languages with nothing to say the two
     domains never overlap.
 
-    Every assertion names the exact label. Matching on `(kind, scope)` alone
-    cannot tell `tsc --noEmit` from `npm run typecheck`, so a wrong `extensions=`
-    on either one is invisible while the other survives — and both are project
-    typechecks that coexist here.
+    Every assertion names the exact label, because matching on `(kind, scope)`
+    alone cannot tell `tsc --noEmit` from `npm run typecheck` — a wrong
+    `extensions=` on either one would then be invisible.
     """
     root = _repo(
         tmp_path,
@@ -308,15 +307,67 @@ def test_a_mixed_python_and_typescript_repo_keeps_project_typecheck_and_lint(
     kinds = [(c["kind"], c["scope"], c["label"]) for c in profile["checks"]]
     assert ("typecheck", "file", "mypy") in kinds, "python's file-scope mypy must still be present"
     assert ("lint", "file", "ruff check") in kinds, "python's file-scope ruff must still be present"
-    assert ("typecheck", "project", "tsc --noEmit") in kinds, (
-        f"a python file check must not delete TypeScript's own project typecheck: {kinds}"
-    )
     assert ("typecheck", "project", "npm run typecheck") in kinds, (
         f"a python file check must not delete the declared project typecheck: {kinds}"
     )
     assert ("lint", "project", "npm run lint") in kinds, (
         f"a python file check must not delete the project-wide npm run lint: {kinds}"
     )
+
+
+def test_a_declared_typecheck_script_is_not_run_twice(data_dir, tmp_path, monkeypatch):
+    """`"typecheck": "tsc --noEmit"` in package.json plus a tsconfig.json is the
+    ordinary shape of a TypeScript project, and it produced two project
+    typechecks running the same command.
+
+    Nothing failed and nothing was wrong in the output — it just ran the slowest
+    check in the profile twice at the end of every turn, which on a real monorepo
+    is minutes of the user's time per turn, spent to learn what was already known.
+    """
+    root = _repo(
+        tmp_path,
+        package__json=json.dumps({"scripts": {"typecheck": "tsc --noEmit"}}),
+        tsconfig__json="{}",
+        package__lock__json="{}",
+    )
+    _stub(root, "tsc")
+    _on_path(monkeypatch, tmp_path, "npm")
+
+    typechecks = [
+        c["label"] for c in get_profile(root, refresh=True)["checks"]
+        if c["kind"] == "typecheck" and c["scope"] == "project"
+    ]
+
+    assert typechecks == ["npm run typecheck"], (
+        f"the repo's own declaration should be the one that runs, and only once: {typechecks}"
+    )
+
+
+def test_a_typescript_repo_that_declares_no_script_still_gets_a_typecheck(
+    data_dir, tmp_path, monkeypatch
+):
+    """The direction the deduplication above must not overshoot into.
+
+    Dropping a project check that another project check covers is only safe while
+    there *is* another one. If it started firing on the tsconfig-only repo, the
+    type errors this plugin exists to catch would simply stop being looked for,
+    and the end-of-turn gate would report clean.
+    """
+    root = _repo(
+        tmp_path,
+        package__json=json.dumps({"scripts": {"dev": "vite"}}),
+        tsconfig__json="{}",
+        package__lock__json="{}",
+    )
+    _stub(root, "tsc")
+    _on_path(monkeypatch, tmp_path, "npm")
+
+    typechecks = [
+        c["label"] for c in get_profile(root, refresh=True)["checks"]
+        if c["kind"] == "typecheck" and c["scope"] == "project"
+    ]
+
+    assert typechecks == ["tsc --noEmit"], f"nothing would typecheck this repo: {typechecks}"
 
 
 def test_a_pure_python_repo_still_drops_project_wide_lint(data_dir, tmp_path):
@@ -417,3 +468,126 @@ def test_no_script_still_reaches_for_the_removed_approval_step():
         if word in path.read_text(encoding="utf-8")
     }
     assert not stale, f"scripts still referencing the removed approval step: {stale}"
+
+
+# --- cache invalidation -------------------------------------------------------
+
+
+def test_setting_a_linter_up_after_the_first_detection_is_noticed(data_dir, tmp_path):
+    """The cache was fingerprinted on the ecosystem manifests alone, and setting a
+    linter up touches none of them: you add `.eslintrc.json` and run an install.
+
+    So the profile built on the very first edit was the profile forever. A repo
+    detected before its tooling existed stayed on syntax-only checks with no
+    expiry and no other rebuild trigger, and the session banner kept reporting
+    that as the answer. The user configures their linter, the harness never runs
+    it, and nothing anywhere says so.
+    """
+    root = _repo(tmp_path, package__json=json.dumps({"name": "x"}))
+
+    before = [c["label"] for c in get_profile(root)["checks"]]
+    assert "eslint" not in before, "the fixture must start without a linter"
+
+    (root / ".eslintrc.json").write_text("{}", encoding="utf-8")
+    _vendor(root, "eslint")
+
+    after = [c["label"] for c in get_profile(root)["checks"]]
+
+    assert "eslint" in after, f"the linter the user just configured is still not run: {after}"
+
+
+def test_removing_a_tool_is_noticed_too(data_dir, tmp_path):
+    """The same staleness in the direction that produces noise rather than silence:
+    a profile pinned to a vendored binary that no longer exists goes on trying to
+    run it every time the file is edited."""
+    root = _repo(tmp_path, package__json=json.dumps({"name": "x"}), __eslintrc__json="{}")
+    _vendor(root, "eslint")
+    assert "eslint" in [c["label"] for c in get_profile(root)["checks"]]
+
+    (root / "node_modules" / ".bin" / "eslint").unlink()
+
+    assert "eslint" not in [c["label"] for c in get_profile(root)["checks"]]
+
+
+def test_an_unchanged_repo_is_not_re_detected(data_dir, tmp_path):
+    """The other direction, and the reason the cache exists at all.
+
+    Without this the two tests above could both pass by never caching anything,
+    which would put a full detection sweep on the front of every single edit.
+    """
+    root = _repo(tmp_path, package__json=json.dumps({"name": "x"}))
+    get_profile(root)
+
+    calls = []
+    original = detect.build_profile
+    detect.build_profile = lambda r: (calls.append(r), original(r))[1]
+    try:
+        get_profile(root)
+    finally:
+        detect.build_profile = original
+
+    assert calls == [], "an untouched repo was re-detected from scratch"
+
+
+def test_a_profile_older_than_the_ceiling_is_rebuilt(data_dir, tmp_path):
+    """A tool installed *globally* changes nothing inside the repo, so no
+    fingerprint can see it. The age ceiling is the only thing that bounds how long
+    that answer can stay wrong, and without it the bound is forever.
+    """
+    root = _repo(tmp_path, package__json=json.dumps({"name": "x"}))
+    get_profile(root)
+
+    cache = next((data_dir / "profiles").glob("*.json"))
+    stale = cache.stat().st_mtime - detect.PROFILE_MAX_AGE - 60
+    os.utime(cache, (stale, stale))
+
+    calls = []
+    original = detect.build_profile
+    detect.build_profile = lambda r: (calls.append(r), original(r))[1]
+    try:
+        get_profile(root)
+    finally:
+        detect.build_profile = original
+
+    assert calls, "a profile past its age ceiling was served from cache anyway"
+
+
+def _vendor(root: Path, name: str) -> None:
+    """Install a stub as a project-local binary, which is what `_local_bin` finds."""
+    bindir = root / "node_modules" / ".bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    (bindir / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bindir / name).chmod(0o755)
+
+
+def test_two_languages_project_checks_of_the_same_kind_both_survive(
+    data_dir, tmp_path, monkeypatch
+):
+    """The hazard the project-to-project deduplication brings with it, and the one
+    the older file-to-project rule was already written to avoid.
+
+    `npm run test` and `go test ./...` are both project `test` checks, and they
+    cover disjoint files — neither substitutes for the other. Deduplicating on
+    `kind` alone would keep whichever came first and delete the rest, so a Go
+    service with a TypeScript frontend would stop running its Go tests and its
+    Go vet completely, and the end-of-turn gate would report clean.
+
+    Reproduced with a mutation: removing the extension-overlap condition from
+    `_dedupe` left the entire suite green before this existed.
+    """
+    root = _repo(
+        tmp_path,
+        package__json=json.dumps({"scripts": {"lint": "eslint .", "test": "vitest run"}}),
+        package__lock__json="{}",
+        go__mod="module x\n",
+    )
+    _on_path(monkeypatch, tmp_path, "npm")
+    _on_path(monkeypatch, tmp_path, "go")
+
+    project = {(c["kind"], c["label"]) for c in get_profile(root, refresh=True)["checks"]
+               if c["scope"] == "project"}
+
+    assert ("test", "npm run test") in project, f"the TypeScript suite stopped running: {project}"
+    assert ("test", "go test") in project, f"the Go suite stopped running: {project}"
+    assert ("lint", "npm run lint") in project, f"the TypeScript lint stopped running: {project}"
+    assert ("lint", "go vet") in project, f"go vet stopped running: {project}"

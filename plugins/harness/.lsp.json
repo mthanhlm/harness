@@ -1,0 +1,41 @@
+{
+  "typescript": {
+    "command": "typescript-language-server",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".ts": "typescript",
+      ".mts": "typescript",
+      ".cts": "typescript",
+      ".tsx": "typescriptreact",
+      ".js": "javascript",
+      ".mjs": "javascript",
+      ".cjs": "javascript",
+      ".jsx": "javascriptreact"
+    },
+    "diagnostics": false
+  },
+  "python": {
+    "command": "pyright-langserver",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    },
+    "diagnostics": false
+  },
+  "go": {
+    "command": "gopls",
+    "args": ["serve"],
+    "extensionToLanguage": {
+      ".go": "go"
+    },
+    "diagnostics": false
+  },
+  "rust": {
+    "command": "rust-analyzer",
+    "extensionToLanguage": {
+      ".rs": "rust"
+    },
+    "diagnostics": false
+  }
+}

@@ -24,7 +24,7 @@ whatever you are running on.
 ## 1. Read the plan first
 
 ```bash
-cat "${CLAUDE_PLUGIN_DATA}/contracts/${CLAUDE_SESSION_ID}.md"
+CONTRACT=$(CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/contract.py" path) && cat "$CONTRACT"
 ```
 
 If there is no plan, or its `status:` is not `approved`, **stop and say so.** Do

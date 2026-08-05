@@ -77,18 +77,33 @@ def _inside(root: Path, target: Path) -> bool:
         return False
 
 
+def _lines(text: object) -> int:
+    return text.count("\n") + 1 if isinstance(text, str) and text else 0
+
+
 def _edit_size(event: dict) -> int:
-    """Rough count of lines this edit touched, for the diff budget."""
+    """Rough count of lines this edit touched, for the diff budget.
+
+    The larger of what went out and what came in, not just what came in. Counting
+    `new_string` alone made a deletion cost one line however much it removed, and
+    `lines_changed` is what `session_end.outcome_for` compares against the plan's
+    `~N lines` forecast — so a session that predicted a hundred lines and then
+    tore out nine hundred was recorded in the roadmap as having `held`. The
+    roadmap is the evidence the challenger cites at the start of the next plan,
+    and this is the number that decides whether it says "this was reworked".
+    """
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         return 0
     if isinstance(content := tool_input.get("content"), str):
-        return content.count("\n") + 1
-    if isinstance(new := tool_input.get("new_string"), str):
-        return new.count("\n") + 1
+        return _lines(content)
+    if "new_string" in tool_input or "old_string" in tool_input:
+        return max(_lines(tool_input.get("new_string")), _lines(tool_input.get("old_string")))
     if isinstance(edits := tool_input.get("edits"), list):
         return sum(
-            str(e.get("new_string", "")).count("\n") + 1 for e in edits if isinstance(e, dict)
+            max(_lines(e.get("new_string")), _lines(e.get("old_string")))
+            for e in edits
+            if isinstance(e, dict)
         )
     return 0
 

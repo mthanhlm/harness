@@ -84,10 +84,19 @@ def _empty_totals() -> dict[str, Any]:
 
 
 def _accumulate(path: Path, totals: dict[str, Any]) -> dict[str, Any]:
-    """Add one transcript's usage to `totals`, in place."""
+    """Add one transcript's usage to `totals`, in place.
+
+    A transcript that cannot be opened marks the totals `incomplete` rather than
+    contributing nothing. The two are indistinguishable in the arithmetic and
+    opposite in meaning: a session with no usage read costs $0 in every figure
+    the report prints, and lands in the `short` bucket of the rework table
+    because it appears to have taken zero turns — which is the one number the
+    whole 0.8 flow exists to move.
+    """
     try:
         handle = path.open(encoding="utf-8")
     except OSError:
+        totals["incomplete"] = True
         return totals
 
     with handle:
@@ -137,31 +146,62 @@ def subagent_transcripts(path: str) -> list[Path]:
         return []
 
 
-def read_transcript(path: str) -> dict[str, Any]:
+def read_transcript(path: str, budget: float | None = None) -> dict[str, Any]:
     """Sum token usage and cost per model for a session, lead and subagents.
 
     The two are kept apart rather than merged. Knowing the total matters, but
     the question the report exists to answer — is delegating to a cheap model
     worth it — needs the split, and a single figure cannot be un-added later.
+
+    `budget` is seconds of wall clock, and it exists because of where this runs.
+    `SessionEnd` hooks share a **1.5-second** budget, and the docs are explicit
+    that a `timeout` on a *plugin* hook does not raise it — so the 30 seconds
+    `hooks.json` asks for are not 30 seconds this ever gets. The worst real
+    transcript on this machine (40MB, 70 subagents) takes 0.26s, which is why
+    this is insurance rather than a fix; what it buys is that overrunning marks
+    the totals `incomplete` instead of the process being killed part-way through
+    and the whole ledger line, roadmap entry included, being lost.
     """
+    from time import monotonic
+
+    deadline = monotonic() + budget if budget else None
     totals = _accumulate(Path(path), _empty_totals())
 
     delegated = _empty_totals()
     files = subagent_transcripts(path)
+    read = 0
     for transcript in files:
+        if deadline is not None and monotonic() > deadline:
+            delegated["incomplete"] = True
+            break
         _accumulate(transcript, delegated)
-    delegated["count"] = len(files)
+        read += 1
+    delegated["count"] = read
 
     totals["subagents"] = delegated
     totals["total_cost_usd"] = totals["cost_usd"] + delegated["cost_usd"]
+    if delegated.get("incomplete"):
+        totals["incomplete"] = True
     return totals
+
+
+# What `read_transcript` is allowed to spend of the 1.5 seconds every SessionEnd
+# hook on the machine shares. Leaves room for the roadmap append that runs first
+# and for interpreter start-up, which is most of the rest.
+USAGE_BUDGET_SECONDS = 0.8
 
 
 def record(session: dict[str, Any], transcript_path: str | None) -> dict[str, Any]:
     """Append one session summary to the ledger."""
     import contract as contract_mod
 
-    usage = read_transcript(transcript_path) if transcript_path else {}
+    usage = (
+        read_transcript(transcript_path, USAGE_BUDGET_SECONDS)
+        if transcript_path
+        # Not `{}`. An empty usage block reads as a free session everywhere it is
+        # summed, and the absence of a transcript path is a fact worth keeping.
+        else {"incomplete": True}
+    )
     checks = session.get("checks") or {}
 
     # The contract lives in its own file rather than in session state, so read
@@ -201,6 +241,62 @@ def load_all() -> list[dict[str, Any]]:
     except OSError:
         pass
     return entries
+
+
+# Session length in assistant turns. The buckets are wide because the thing
+# they separate is coarse: a session that answers a question, a session that
+# builds something, and a session that spent a thousand turns rebuilding what it
+# had already built twice.
+LENGTH_BUCKETS = (("short", 0, 50), ("medium", 50, 200), ("long", 200, 600), ("marathon", 600, None))
+
+
+def _bucket(turns: int) -> str:
+    for name, low, high in LENGTH_BUCKETS:
+        if turns >= low and (high is None or turns < high):
+            return name
+    return "short"
+
+
+def rework(entries: list[dict[str, Any]]) -> list[tuple[str, int, float, float]]:
+    """Lines changed per file touched, by how long the session ran.
+
+    This is the number the 0.8 flow exists to move, and it is not a cost figure.
+    A session that touches nine files at four hundred lines apiece did not write
+    four hundred lines of anything nine times — it wrote a hundred and rewrote
+    them, because the design changed while it was being built. Across real use
+    the figure went 10 → 62 → 133 → 135 as sessions got longer, and the fifteen
+    longest sessions were 42% of the money.
+
+    Computed here rather than by a model reading the ledger: it is arithmetic
+    over recorded fields, so it comes out the same every time and can be argued
+    with. A model asked to eyeball the same file would produce a number nobody
+    can check.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        files = int(entry.get("files_touched") or 0)
+        if not files:
+            continue  # A session that changed nothing has no ratio to report.
+        usage = entry.get("usage") or {}
+        # A session whose transcript could not be read has no turn count, and an
+        # unread count is not a count of zero. Bucketing it anyway files a
+        # nine-hundred-turn marathon under `short`, which moves the one figure
+        # this table exists to report in the direction that looks like success.
+        if usage.get("incomplete"):
+            continue
+        turns = int(usage.get("assistant_turns") or 0)
+        groups.setdefault(_bucket(turns), []).append(entry)
+
+    out = []
+    for name, _, _ in LENGTH_BUCKETS:
+        rows = groups.get(name) or []
+        if not rows:
+            continue
+        lines = sum(int(r.get("lines_changed") or 0) for r in rows)
+        files = sum(int(r.get("files_touched") or 0) for r in rows)
+        planned = sum(1 for r in rows if r.get("contract"))
+        out.append((name, len(rows), lines / files, planned / len(rows) * 100))
+    return out
 
 
 def summarize(entries: list[dict[str, Any]]) -> str:
@@ -263,12 +359,43 @@ def summarize(entries: list[dict[str, Any]]) -> str:
             f"Gate counts unknown for {unmeasured} session(s) rebuilt from transcripts —"
             " cost is real, the check figures were never recorded."
         )
+    # Said rather than absorbed. These rows contribute $0 to every figure above,
+    # so without this line the total reads as a measurement when it is a floor.
+    unpriced = sum(1 for e in entries if (e.get("usage") or {}).get("incomplete"))
+    if unpriced:
+        out.append(
+            f"Usage could not be read for {unpriced} session(s), so the totals above are a"
+            " lower bound and those sessions are left out of the rework table."
+        )
     if checks_run:
         rate = checks_failed / checks_run * 100
         out.append(
             f"A check blocked {rate:.1f}% of the time — each one is a defect that did not"
             " reach the end of the turn."
         )
+
+    rows = rework(entries)
+    if rows:
+        out += [
+            "",
+            "Rework — lines changed per file touched, by session length:",
+            f"  {'':10} {'n':>4} {'lines/file':>11} {'planned':>9}",
+        ]
+        for name, count, ratio, planned in rows:
+            out.append(f"  {name:10} {count:>4} {ratio:>11.0f} {planned:>8.0f}%")
+        out.append(
+            "  A file rewritten thirteen times is not thirteen files' worth of work."
+            " This rising with session length is the design changing while it is"
+            " being built, and it is what the plan flow exists to bring down."
+        )
+
+    out += [
+        "",
+        "What this cannot tell you: a session resumed several times is recorded once"
+        " per SessionEnd, each a fresh re-read of the whole transcript, so its cost"
+        " is counted that many times over. Treat the total as an upper bound and the"
+        " proportions as sound.",
+    ]
     return "\n".join(out)
 
 

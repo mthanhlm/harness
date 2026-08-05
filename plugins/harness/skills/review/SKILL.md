@@ -3,7 +3,7 @@ name: review
 description: Review the current changes with the specialists the change actually needs, refuting each finding before reporting it. Use after implementing something and before treating it as done, or when asked to review a diff, a branch or recent work.
 argument-hint: "[optional focus, e.g. 'security' or a file path]"
 effort: xhigh
-allowed-tools: Bash, Read, Grep, Glob, Task, Skill
+allowed-tools: Bash, Read, Grep, Glob, Edit, Task, Skill, AskUserQuestion
 ---
 
 # Review the change
@@ -28,8 +28,12 @@ worse than none, because it reports clean.
 ## 2. Read the contract, if there is one
 
 ```bash
-cat "${CLAUDE_PLUGIN_DATA}/contracts/${CLAUDE_SESSION_ID}.md" 2>/dev/null
+CONTRACT=$(CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/contract.py" path) && cat "$CONTRACT"
 ```
+
+If that prints nothing there is no contract, which is a normal thing to review
+without. What is not normal is a contract that exists under a name nothing reads,
+so if the command errors, say so rather than reviewing as though none was written.
 
 A contract turns review from an open question into a specific one. Check the
 diff against it:
@@ -40,12 +44,47 @@ diff against it:
 
 A gap against an agreed contract outranks anything a reviewer finds on taste.
 
-## 3. Pick the crew
+## 3. Pick the reviewers
 
-Use `harness:crew` — the scoped name, since the Skill tool cannot resolve a bare
-`crew` — to select the roles this change needs, and tell the user which ones you
-chose and which you skipped. Running every reviewer on every change produces
-noise, and noise trains people to skim.
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/crew.py" after "$ARGUMENTS"
+```
+
+This returns the changed files, the domains **their paths** put beyond argument,
+and the roles for this phase — split into the ones that always run and the ones
+you decide on. **Launch by the `subagent_type` field, not `name`:** these agents
+ship inside a plugin, so the Task tool addresses them as `harness:reviewer-perf`.
+The bare name fails with an unknown-agent error that reads like you did not
+bother to run it, so the report gives you both and you want the second.
+
+The always-on roles run. For each conditional one, judge it against what
+actually changed rather than running everything:
+
+- `reviewer-security` — only if the change touches input, auth, queries, paths,
+  external calls or config.
+- `reviewer-perf` — only if it loops over user data, queries, renders lists, or
+  sits on a request path.
+- `reviewer-tests` — if tests changed, or if behaviour changed without them.
+- `reviewer-docs` — if a signature, name, default, command or public behaviour
+  changed.
+
+Running every role on every change is how a review becomes noise, and noise
+trains people to skim. A role with nothing to look at will produce something
+anyway, because that is what it was asked to do.
+
+Whether the design was right at all is not a review question. It was settled
+before the code existed, by `harness:challenger` at the top of `harness:plan`.
+Asked here, it can only recommend rewriting work that is already done.
+
+**Say the crew out loud before running it** — one or two lines, which roles and
+why, which you skipped. This is where the user can say "you have missed the
+database side of this", which is far cheaper now than after.
+
+> Reviewing 6 files (schema.ts, route.ts, page.tsx). Roles: correctness, bloat,
+> perf. Skipping security — nothing here takes user input.
+
+Each reviewer loads its own domain knowledge from the paths it is given, so you
+do not select that for them.
 
 ## 4. Run the reviewers in parallel
 
@@ -67,6 +106,35 @@ given. Acting on an invented finding adds a null check for a case that cannot
 occur, or an abstraction for a problem that does not exist — the exact
 over-building this harness exists to prevent. The refuter defaults to refuted
 when unsure, and that asymmetry is deliberate.
+
+## 5b. Run any mutation the test reviewer specified
+
+`reviewer-tests` reports weak tests as a named mutation — *"returning a constant
+from `total()` leaves this green"* — and deliberately does not run it. It has no
+`Edit` tool, and it runs alongside the other reviewers on a shared working tree,
+where an edit of its own would surface as a phantom finding in theirs.
+
+By this step the fan-out is finished and the tree is quiet, so you can settle it
+with evidence instead of an argument:
+
+1. `git stash list` and `git status` first — the tree must be clean apart from
+   the change under review. If it is not, skip this and report the mutation as
+   unverified.
+2. Apply the named mutation with `Edit`, one at a time.
+3. Run the test the reviewer named.
+4. **Revert immediately**, with `Edit` back or `git checkout -- <file>`, before
+   running the next one. Never leave a mutation in place across two runs.
+5. Confirm the file is back: `git diff -- <file>` must show only the change under
+   review.
+
+    the test stays green  → the finding is confirmed with proof. Report the
+                            mutation and the passing run
+    the test goes red     → the finding is wrong. Drop it, and say the test was
+                            checked and holds
+
+Skip this whenever the tree is dirty, the mutation is not a single localised
+edit, or the test suite takes long enough that the tree would sit mutated. An
+unverified finding reported as unverified is fine; a mutation left behind is not.
 
 ## 6. Report
 

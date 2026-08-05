@@ -8,7 +8,7 @@ from here, since it belongs to whoever launched the session.
 
 import sys
 
-from state import OFF_MARKER, data_dir, env_disabled
+from state import data_dir, env_disabled, off_marker
 
 
 def main() -> int:
@@ -16,13 +16,14 @@ def main() -> int:
 
     if action == "off":
         data_dir().mkdir(parents=True, exist_ok=True)
-        OFF_MARKER.write_text("disabled via /harness:switch off\n", encoding="utf-8")
+        marker = off_marker()
+        marker.write_text("disabled via switch.py off\n", encoding="utf-8")
         print("Harness gates OFF. No hook will block anything.")
-        print(f"Marker: {OFF_MARKER}")
+        print(f"Marker: {marker}")
         return 0
 
     if action == "on":
-        OFF_MARKER.unlink(missing_ok=True)
+        off_marker().unlink(missing_ok=True)
         if env_disabled():
             print("Marker removed, but HARNESS_OFF=1 is set in the environment.")
             print("Gates stay off until that variable is unset in the shell that")
@@ -34,8 +35,8 @@ def main() -> int:
     if action == "status":
         if env_disabled():
             print("OFF (HARNESS_OFF=1 in environment)")
-        elif OFF_MARKER.exists():
-            print(f"OFF (marker file present: {OFF_MARKER})")
+        elif off_marker().exists():
+            print(f"OFF (marker file present: {off_marker()})")
         else:
             print("ON — session bootstrap, per-edit checks, and the end-of-turn gate are active.")
         print(f"State directory: {data_dir()}")

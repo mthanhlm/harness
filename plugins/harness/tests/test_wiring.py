@@ -85,19 +85,38 @@ def test_every_hook_script_exists():
                 assert script.is_file(), f"{event} points at missing {script}"
 
 
-def test_every_lens_in_the_registry_is_a_real_skill():
-    for lens in REGISTRY["lenses"]:
-        assert (SKILLS / lens["name"] / "SKILL.md").is_file(), lens["name"]
+LENSES = PLUGIN / "references" / "lenses"
 
 
-def test_the_registry_and_the_lens_frontmatter_agree_on_paths():
-    """Two declarations of one fact, maintained by hand. They drift silently,
-    and then the crew line shown to the user disagrees with what is loaded."""
+def test_every_lens_in_the_registry_has_a_page_behind_it():
+    """A registry entry with no page is a lens that routes and then loads
+    nothing — `lenses.py` skips what it cannot read rather than crashing inside
+    somebody else's task, so this is the only place the gap is visible."""
     for lens in REGISTRY["lenses"]:
-        declared = frontmatter(SKILLS / lens["name"] / "SKILL.md").get("paths", [])
-        assert set(declared) == set(lens["paths"]), (
-            f"{lens['name']}: skill-only {set(declared) - set(lens['paths'])}, "
-            f"registry-only {set(lens['paths']) - set(declared)}"
+        assert (LENSES / f"{lens['name']}.md").is_file(), lens["name"]
+
+
+def test_no_lens_page_is_stranded_without_a_registry_entry():
+    """The other direction. A page nothing routes to is dead weight that reads
+    as maintained — and the registry is now the only routing table there is,
+    since the paths used to be declared twice and drifted."""
+    named = {lens["name"] for lens in REGISTRY["lenses"]}
+    for page in LENSES.glob("*.md"):
+        assert page.stem in named, f"{page.stem} is a lens nothing can select"
+
+
+def test_a_lens_is_knowledge_and_not_a_skill():
+    """They were nine skills, and every agent that might need one declared six
+    in its frontmatter — fourteen entries in the model-facing listing for a
+    plugin with one flow. They carry no tools and no model; being read as
+    information is what they always were."""
+    assert not list(SKILLS.glob("lens-*")), "a lens has come back as a skill"
+    for path in AGENT_FILES:
+        declared = frontmatter(path).get("skills", [])
+        # `"lens-" not in declared` is the tempting form and is a tautology —
+        # it asks whether the exact string is an element, which it never is.
+        assert not [s for s in declared if s.startswith("lens-")], (
+            f"{path.stem} declares a lens as a skill again: {declared}"
         )
 
 
@@ -147,6 +166,45 @@ def test_a_skill_never_tells_the_model_to_dispatch_a_sibling_by_bare_name(path):
                     f"{path.parent.name} dispatches `{name}` without the harness: prefix"
                     f" — {text[max(0, match.start() - 40): match.end() + 10]!r}"
                 )
+
+
+# `harness:worker` in prose, `harness:reviewer-*` as a wildcard, and
+# `harness:plan`'s own name are all references rather than typos. A trailing `*`
+# is a family, and it is checked by prefix instead.
+_PREFIXED_RE = re.compile(r"\bharness:([a-z][\w-]*)(\*?)")
+
+
+def _label(path: Path) -> str:
+    """`SKILL14` names nothing. A skill is identified by its directory."""
+    return path.parent.name if path.stem == "SKILL" else path.stem
+
+
+@pytest.mark.parametrize("path", SKILL_FILES + AGENT_FILES, ids=_label)
+def test_every_prefixed_name_resolves_to_something_that_exists(path):
+    """The other half of the bare-name test, and the half that rots.
+
+    The sibling test catches `implement` written without its prefix. It cannot
+    catch `harness:reuse-auditor` written *correctly* — for an agent that was
+    deleted last week. Both fail the same silent way: the dispatch does not
+    raise, the model reads something else or nothing, and the run looks clean.
+
+    This is the failure mode of deleting an agent, which is a thing this plugin
+    does whenever three partial jobs get merged into one. Three skills referred
+    to the three agents removed in 0.8, in three files nobody would have thought
+    to open.
+    """
+    text = path.read_text(encoding="utf-8")
+    for name, wildcard in set(_PREFIXED_RE.findall(text)):
+        if wildcard:
+            assert any(s.startswith(name) for s in SIBLINGS), (
+                f"{path.stem} references the family `harness:{name}*`, which matches no"
+                f" agent or skill"
+            )
+            continue
+        assert name in SIBLINGS, (
+            f"{path.stem} dispatches `harness:{name}`, which is neither an agent nor a"
+            f" skill in this plugin — available: {', '.join(SIBLINGS)}"
+        )
 
 
 def test_session_start_announces_the_checks_a_repo_will_actually_run(
@@ -218,7 +276,7 @@ def test_a_skill_that_shells_out_to_plugin_state_passes_the_data_directory(path)
 
     So a skill command that reads or writes plugin state resolves a *different*
     directory than every hook, and reports confident success against it.
-    `/harness:report` answered "No sessions recorded yet" over a ledger holding
+    The report answered "No sessions recorded yet" over a ledger holding
     ten sessions and $830.
 
     Which scripts need it is derived from their source rather than listed here,
@@ -322,3 +380,114 @@ def test_write_capable_agents_are_named_here_on_purpose():
         if {"Write", "Edit"} & {t.strip() for t in str(frontmatter(p).get("tools", "")).split(",")}
     }
     assert writers == {"worker"}, f"unexpected write-capable agents: {writers - {'worker'}}"
+
+
+# Every hook event this plugin subscribes to. Listed here so that adding one
+# without a script, or renaming a script out from under one, is caught — and so
+# that the set is visible in one place rather than spread across a JSON file.
+SUBSCRIBED = {
+    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+    # `PostToolUse` fires only when the tool succeeded. A shell command that
+    # exits non-zero has usually still written something — a build that emits
+    # `dist/` and then fails its own check — and without the failure event those
+    # files reach no gate at all: the pre-command sample is simply overwritten
+    # by the next command.
+    "PostToolUseFailure",
+    "SubagentStart", "SubagentStop", "PostCompact", "Stop", "SessionEnd",
+}
+
+
+def test_the_hook_events_are_the_ones_intended():
+    """A typo in an event name does not raise — the hook is registered against
+    an event that never fires, and the gate silently does nothing forever. This
+    is the one class of wiring error the plugin loader will not report, because
+    unknown event names are simply ignored.
+    """
+    assert set(HOOKS["hooks"]) == SUBSCRIBED, (
+        f"unexpected {set(HOOKS['hooks']) - SUBSCRIBED}, "
+        f"missing {SUBSCRIBED - set(HOOKS['hooks'])}"
+    )
+
+
+@pytest.mark.parametrize("path", AGENT_FILES, ids=lambda p: p.stem)
+def test_every_agent_caps_its_own_loop(path):
+    """An agent loop with no turn cap is an unbounded bill and a stuck process.
+
+    Agents do get stuck repeating one tool call, and without `maxTurns` the only
+    thing that ends it is the session. The plugin's own llm-agents lens states
+    this as a rule; it went a long time without applying it to itself.
+    """
+    turns = frontmatter(path).get("maxTurns")
+
+    assert turns, f"{path.stem} has no maxTurns"
+    assert 1 <= int(turns) <= 100, f"{path.stem} caps at {turns}, which is not a cap"
+
+
+def test_the_manifest_passes_the_official_validator():
+    """`claude plugin validate --strict` checks the manifest against the real
+    schema, which nothing in this file can do.
+
+    Strict mode turns unrecognised-field warnings into errors, which is what
+    catches a misspelled key — a field one character off is ignored at load
+    time, so the feature it was meant to enable simply never happens.
+    """
+    try:
+        proc = subprocess.run(
+            ["claude", "plugin", "validate", str(PLUGIN), "--strict"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("the claude CLI is not on PATH here")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# ------------------------------------------------ the hooks fire where they should
+
+
+def test_a_hook_that_inspects_shell_commands_covers_both_shells():
+    """`Bash` alone is a hook that never fires on some machines.
+
+    On Windows without Git Bash the PowerShell tool is enabled automatically and
+    Claude Code does not register the Bash tool at all, so shell commands arrive
+    as `PowerShell` and a matcher of `Bash` matches nothing. `bash_watch` is what
+    records files changed outside `Edit` and `Write`; missed, those edits never
+    enter `files_touched`, and the scope fence and the end-of-turn gate both go on
+    reporting clean over changes they never saw.
+    """
+    for event, groups in HOOKS["hooks"].items():
+        for group in groups:
+            matcher = group.get("matcher", "")
+            if "Bash" not in matcher:
+                continue
+            scripts = [Path(h["args"][0]).name for h in group["hooks"] if h.get("args")]
+            assert "PowerShell" in matcher, (
+                f"{event} runs {scripts} on `{matcher}` — it will never fire where"
+                " PowerShell is the shell tool"
+            )
+
+
+@pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_a_skill_may_only_instruct_tools_it_is_allowed(path):
+    """A skill's `allowed-tools` is a hard restriction, not a hint.
+
+    `review` told the model to apply a mutation with `Edit` and then confirm the
+    test still passed — the step that turns "this test looks weak" into evidence.
+    `Edit` was not in its `allowed-tools`, so the step could not run at all, and
+    the skill's own instruction was the only thing saying otherwise.
+
+    Backticked tool names only. Prose that happens to contain the word "write"
+    is not an instruction, and a check that cannot tell the two apart gets its
+    true sentences reworded until it passes.
+    """
+    text = path.read_text(encoding="utf-8")
+    body = text.split("---", 2)[2]
+    allowed = {t.strip() for t in str(frontmatter(path).get("allowed-tools", "")).split(",")}
+
+    named = {m for m in re.findall(r"`(Edit|Write|Read|Grep|Glob|Bash|Task|Skill|TodoWrite|AskUserQuestion|WebFetch|WebSearch)`", body)}
+    missing = sorted(named - allowed)
+
+    assert not missing, (
+        f"{path.parent.name} instructs {missing}, which its allowed-tools does not"
+        " grant — the step cannot run and nothing says so"
+    )

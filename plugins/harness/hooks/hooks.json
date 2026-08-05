@@ -1,4 +1,5 @@
 {
+  "description": "harness \u2014 argue before you build. The SessionEnd timeout below is inert by design of Claude Code: plugin hooks share a 1.5s SessionEnd budget and a plugin's own timeout cannot raise it, so session_end.py finishes well inside it (0.26s against the largest transcript on record) and its transcript scan carries its own deadline.",
   "hooks": {
     "SessionStart": [
       {
@@ -43,7 +44,7 @@
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -72,7 +73,7 @@
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -81,6 +82,37 @@
               "${CLAUDE_PLUGIN_ROOT}/scripts/bash_watch.py"
             ],
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/bash_watch.py"
+            ],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "^harness:",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/subagent_start.py"
+            ],
+            "timeout": 15,
+            "statusMessage": "harness: loading domain knowledge for this agent"
           }
         ]
       }
@@ -96,6 +128,20 @@
             ],
             "timeout": 120,
             "statusMessage": "harness: checking the worker's own files"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/post_compact.py"
+            ],
+            "timeout": 10
           }
         ]
       }

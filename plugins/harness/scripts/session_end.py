@@ -30,10 +30,16 @@ MAX_DEFERRED = 4
 
 
 def _section(text: str, heading: str) -> str:
-    """The body under one `## ` heading, up to the next one."""
-    pattern = rf"^##\s*{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)"
-    match = re.search(pattern, text, re.MULTILINE | re.DOTALL)
-    return match.group(1).strip() if match else ""
+    """The body under one `## ` heading, up to the next one.
+
+    Delegated rather than restated. This file's own copy required the heading
+    line to be exactly `## Verdict`, so a plan writing `## Verdict — patch` got an
+    empty section — and when every section comes back empty, `entry_for` returns
+    None and the session's decisions are never written to the roadmap at all.
+    The comment in `_not_changing` below already says why a second copy of a
+    parser is how a fix lands in one of them and not the other.
+    """
+    return contract_mod.section(text, heading).strip()
 
 
 def _summary(body: str, limit: int = 200) -> str:
@@ -110,6 +116,43 @@ def entry_for(agreed: contract_mod.Contract) -> tuple[str, str] | None:
     return title, "\n".join(lines)
 
 
+def outcome_for(agreed: contract_mod.Contract, session: dict) -> str:
+    """Whether the plan held, judged against its own forecast.
+
+    A plan that predicts four files and a hundred lines, and whose session ends
+    having rewritten nine files at four hundred lines apiece, was not executed —
+    it was redesigned while being built. That is the rework this whole flow
+    exists to make visible, and it is the one outcome signal available here that
+    does not require asking a model what it thinks happened.
+
+    Deliberately narrower than it could be. Whether the contract was amended
+    after approval, and whether the verification command ever ran and passed,
+    would both be better signals; neither is recorded anywhere today, and
+    inventing them from the transcript would be a guess wearing a label.
+
+    `open` is the honest answer for a plan that wrote no Budget: unmeasured is
+    not the same as fine, and recording it as `held` would put a fact in the
+    roadmap that nothing established.
+    """
+    budget = agreed.budget
+    if not budget:
+        return "open"
+    want_files, want_lines = budget
+    got_files = len(session.get("files_touched") or [])
+    got_lines = int(session.get("lines_changed") or 0)
+    if not got_files:
+        return "open"
+
+    # Two ways to overrun: touching files the plan never anticipated, or
+    # rewriting the anticipated ones far more heavily than it thought. The
+    # second is the churn signature; the first is scope drift.
+    if want_files and got_files >= 2 * max(want_files, 1):
+        return "reworked"
+    if want_lines and got_lines >= 2 * max(want_lines, 1):
+        return "reworked"
+    return "held"
+
+
 def write_roadmap(session: dict) -> None:
     """Append the session's decisions, once, and never at the cost of the hook.
 
@@ -125,9 +168,22 @@ def write_roadmap(session: dict) -> None:
         return
     title, body = derived
     root = repo_root(session.get("repo_root"))
-    if title in roadmap.read(root):
+    # Compared against entry *titles*, not against the file as a whole. A
+    # substring test over the whole roadmap silently dropped any plan whose title
+    # happened to appear anywhere in it — including inside the body of an older
+    # entry that merely *mentioned* the same subject, which is the normal case
+    # for follow-up work on the same area. The session that did the follow-up
+    # then recorded nothing, and the roadmap looked like it had already covered
+    # ground it had only talked about.
+    if any(entry.title == title for entry in roadmap.entries(root)):
         return
-    roadmap.append(root, title, body)
+    roadmap.append(
+        root,
+        title,
+        body,
+        supersedes=agreed.supersedes,
+        outcome=outcome_for(agreed, session),
+    )
 
 
 def main() -> int:

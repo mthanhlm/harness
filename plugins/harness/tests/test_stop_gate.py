@@ -9,6 +9,7 @@ gate does not tell you the project is fine.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -58,7 +59,7 @@ def stop_lines(data_dir: Path) -> list[dict]:
 def test_a_gate_with_no_checks_says_nothing_to_verify_not_passed(data_dir, hook_env, tmp_path):
     """`passed` and `nothing ran` must not be the same word.
 
-    `_run_until_failure` returns three empty lists when the profile has no
+    `_run_until_failure` returns four empty lists when the profile has no
     project checks, so `blocking` is empty and the gate takes the success
     branch. It then reports `passed` with `ok: []` — indistinguishable from a
     turn where the tests genuinely ran and were green.
@@ -1008,3 +1009,56 @@ def test_an_unchanged_turn_still_takes_the_cheap_skip(data_dir, hook_env, tmp_pa
     run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
 
     assert stop_lines(data_dir)[-1]["outcome"].startswith("skipped")
+
+
+# --- what the block message claims to know ------------------------------------
+
+
+def test_a_failure_proved_absent_at_head_is_reported_as_this_session_s(
+    data_dir, hook_env, tmp_path
+):
+    """The gate builds a clean worktree at HEAD and re-runs the check there, so
+    when that comes back green it *knows* the session caused the failure.
+
+    It then told the model "if this failure predates your changes, say so plainly
+    instead of trying to fix it" — hedging about a question it had just answered.
+    The model spends the turn investigating provenance rather than the bug.
+    """
+    repo = failing_python_repo(tmp_path)
+    run_hook("post_edit_check.py", edit_json(repo, "a.json"), hook_env, repo)
+    break_the_suite(repo)
+
+    response = run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    assert response.get("decision") == "block"
+    context = response["hookSpecificOutput"]["additionalContext"]
+    assert "does not reproduce on a clean checkout of HEAD" in context, context
+    assert "NOT compared" not in context, "the comparison ran; the message must not say otherwise"
+
+
+def test_a_failure_that_could_not_be_compared_says_so_instead_of_guessing(
+    data_dir, hook_env, tmp_path
+):
+    """The same message, where the comparison is impossible.
+
+    Outside a git repository there is no HEAD to build a worktree from, so
+    `project_check_at_head` returns None — "could not answer", which is a
+    different fact from "HEAD is clean". Both used to produce the identical
+    sentence, and the branch that hedged was the honest one only by accident.
+
+    Failing closed and blocking is still right: the check really did fail. What
+    must not happen is the gate implying it knows whose failure it is.
+    """
+    repo = failing_python_repo(tmp_path)
+    shutil.rmtree(repo / ".git")
+    run_hook("post_edit_check.py", edit_json(repo, "a.json"), hook_env, repo)
+    break_the_suite(repo)
+
+    response = run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    assert response.get("decision") == "block", "a real failure must still block"
+    context = response["hookSpecificOutput"]["additionalContext"]
+    assert "NOT compared against HEAD" in context, context
+    assert "so this session caused it" not in context, (
+        "nothing established that; claiming it sends the model after the wrong bug"
+    )

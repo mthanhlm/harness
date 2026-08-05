@@ -263,3 +263,40 @@ def test_a_second_edit_by_the_same_writer_adds_rather_than_doubles(data_dir):
     assert session["files_touched"] == ["/repo/a.py", "/repo/b.py"]
     assert session["lines_changed"] == 20
     assert session["checks"]["run"] == 4
+
+
+# --- kill switch --------------------------------------------------------------
+
+
+def test_the_kill_switch_reads_the_data_directory_it_is_told_about(data_dir):
+    """`OFF_MARKER` was a module constant, bound to whatever `CLAUDE_PLUGIN_DATA`
+    said at *import* time, while `data_dir()` beside it re-read the environment on
+    every call. Under pytest — which imports at collection and sets the fixture's
+    env afterwards — that resolved to the developer's own `~/.claude` marker.
+
+    So the suite's answer to "are the gates on?" came from the developer's machine
+    rather than from the fixture. On a machine where `switch.py off` had ever been
+    run, every gate test passed by checking nothing at all. That is precisely what
+    `conftest.data_dir` deletes `HARNESS_OFF` to prevent, left open for the file
+    that means the same thing.
+    """
+    import state
+
+    assert not state.gates_disabled(), "a fresh data directory has no marker"
+
+    (data_dir / "off").write_text("off\n", encoding="utf-8")
+
+    assert state.gates_disabled(), "the switch was thrown and no gate would have noticed"
+
+
+def test_throwing_the_switch_under_test_cannot_reach_the_real_data_directory(data_dir):
+    """The same bug pointing outward: `switch.py off` in a test wrote its marker
+    into the user's live plugin data directory and disabled their real harness.
+
+    Asserted by location rather than by running the script, so the test can prove
+    the isolation without having to risk breaking it to do so.
+    """
+    import state
+
+    assert state.off_marker() == data_dir / "off"
+    assert state.off_marker().parent == state.data_dir()

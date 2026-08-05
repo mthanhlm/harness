@@ -61,14 +61,30 @@ There is one entry point. Everything else the model loads for itself.
 
 | Command | Does |
 |---|---|
-| `/harness:plan` | **Start here.** Understands the request, checks what exists, judges whether the code is worth building on, gets your approval — then builds and reviews it |
+| `/harness:plan` | **Start here.** Argues with the request, works out what you actually want, gets your approval — then builds and reviews it |
 | `/harness:review` | Standalone review, for code you didn't just write (a PR, inherited code) |
-| `/harness:report` | What recent sessions cost, and how often a gate caught something |
-| `/harness:switch off` | Kill switch |
 
-Hidden but model-invocable: `implement`, `crew`, `simplify`, `verify-tests`, and
-the nine `lens-*` domain skills. Ask for them in plain language ("check whether
-these tests are real") and the model loads the right one.
+Hidden but model-invocable: `implement`. Everything else that used to be a
+skill is now either a script the flow runs or a page an agent reads — see
+"Thinning the surface" below.
+
+Two things you run by hand rather than as a command. `$CLAUDE_PLUGIN_ROOT` and
+`$CLAUDE_PLUGIN_DATA` are **not** shell variables — Claude Code substitutes them
+into skill and agent text and into hook commands, and nowhere else, so your own
+terminal has neither. Set them once:
+
+```bash
+export CLAUDE_PLUGIN_ROOT=~/.claude/plugins/cache/autonxt-harness/harness/<version>
+export CLAUDE_PLUGIN_DATA=~/.claude/plugins/data/harness-autonxt-harness
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/ledger.py"       # what sessions cost, and the rework figure
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/switch.py" off   # kill switch
+```
+
+`CLAUDE_PLUGIN_DATA` is the one that matters: the scripts read it to find the
+ledger and the contracts, and without it they resolve a different directory from
+the hooks and report a confident nothing. The report answered *"No sessions
+recorded yet"* over a ledger holding ten sessions and $830.
 
 ## Which model runs what
 
@@ -79,25 +95,25 @@ One rule decides every model in the plugin:
 > high-volume work runs cheap, whatever else is true.
 
 Subagents run on their own declared model regardless of the parent, so this holds
-however you have your own session set. Measured: a Sonnet session spawning the
-Opus `architect` billed both, $0.075 and $0.146, in one turn.
+however you have your own session set. Measured: a Sonnet session spawning an
+Opus judgement agent billed both, $0.075 and $0.146, in one turn.
 
 | Agent | Model | Why |
 |---|---|---|
-| `architect` | opus/xhigh | A wrong patch-or-rewrite verdict costs days. Runs rarely |
+| `challenger` | opus/xhigh | Decides whether the right thing is being built at all. A weak one here is unrecoverable |
+| `designer` | opus/xhigh | Same. Everything downstream executes its conclusion faithfully |
 | `reviewer-correctness` | opus/xhigh | Must imagine inputs nobody wrote down |
 | `reviewer-security` | opus/high | Adversarial thinking, but narrow and conditional |
 | `reviewer-tests` | opus/high | "Would this fail if the code were wrong?" is simulation |
 | `refuter` | opus/high | Last gate. A weak one throws away good findings |
-| `reuse-auditor` | sonnet/high | Search and recall — CodeGraph walks the graph, not the model |
 | `reviewer-bloat` | sonnet/high | Duplication and one-caller abstractions are patterns |
 | `reviewer-perf` | sonnet/high | N+1s, missing indexes and blocking calls are structural |
 | `reviewer-docs` | sonnet/medium | Compare the diff against the docs. Mechanical |
 | `worker` | sonnet/medium | Executes a plan that was already agreed |
 
-Every Sonnet agent has something checking it downstream: `reuse-auditor` feeds a
-plan you approve, the three Sonnet reviewers pass through the Opus `refuter`, and
-the worker is fenced by the plan and the per-edit gates. **Nothing on Sonnet makes
+Every Sonnet agent has something checking it downstream: the three Sonnet
+reviewers pass through the Opus `refuter`, and the worker is fenced by the plan
+and the per-edit gates. **Nothing on Sonnet makes
 a final call.**
 
 **Your own session** is the one dial left. If your session does the editing, run
@@ -113,8 +129,7 @@ This is why model policy lives on agents, not skills.
 
 ## CodeGraph — indexed for you, on first use
 
-Three components — `plan`, `simplify` and the `reuse-auditor` agent — search with
-CodeGraph. It follows calls instead of matching text, which is the difference
+Two components — `plan` and the `challenger` agent — search with CodeGraph. It follows calls instead of matching text, which is the difference
 between finding a helper named `toDisplay` when you searched for `formatName` and
 writing the second copy of it.
 
@@ -132,6 +147,39 @@ it says so and the search falls back to Grep and Glob.
 
 Indexing is fast — a few hundred milliseconds on a small repo — and the
 `.codegraph/` directory it writes is excluded for you (see below).
+
+## Language servers — navigation on, diagnostics off
+
+`.lsp.json` declares a language server for each of the four stacks the checks
+already cover: TypeScript/JavaScript, Python, Go and Rust. What that buys is
+go-to-definition, find-references and hover types — the things grep cannot do,
+because grep finds a name and cannot tell a definition from a mention.
+
+**The binary is not bundled.** Nothing here installs `pyright-langserver` or
+`gopls`. A server whose command is missing is skipped, and Claude Code reports
+why only in the `/plugin` Errors tab — so instead the session banner says it
+once, and only when it applies to the repo you are actually in:
+
+```
+No language server for python, so code navigation falls back to grep.
+`npm install -g pyright` enables go-to-definition and find-references.
+```
+
+**Every server sets `diagnostics: false`, deliberately.** The default is `true`,
+which pushes every diagnostic for a file into the context after each edit —
+including the errors that were already at HEAD. The per-edit check runs the same
+compilers and reports only what your edit caused, and the banner tells the model
+in as many words not to go fixing problems it did not cause. A second,
+unfiltered stream of the same errors contradicts that on every edit. That
+failure — a check firing on inherited breakage until someone switches the whole
+thing off — is the one this plugin was built to avoid.
+
+**Do not enable an official LSP plugin alongside this one.** `typescript-lsp`,
+`pyright-lsp` and `rust-analyzer-lsp` claim the same extensions and ship the
+default `diagnostics: true`. Only one server can own an extension: the first
+registered wins and the other never starts, so which behaviour you get depends
+on load order. `/plugin` names whichever is active. `gopls` has no marketplace
+plugin, so Go has no conflict.
 
 ## A cloned repository does get to run its code
 
@@ -154,7 +202,7 @@ stated here rather than left for you to discover: what you get is that checks
 always run and are never silently absent, which is the failure the approval step
 twice caused. What you give up is the boundary.
 
-`/harness:switch off` is the control that remains, and it is yours rather than
+`scripts/switch.py off` is the control that remains, and it is yours rather than
 the repository's.
 
 ## Its own artifacts stay out of your product
@@ -184,17 +232,83 @@ What it is not is a session log. A narrative of what happened rots into a wall
 nobody reads, and then it is worth nothing to the session that needed it. The
 test for an entry is whether it would change what someone does next.
 
-## Something argues against the plan before you approve it
+**It records what became of a decision, not just what was decided.** Each entry
+carries an id, and an outcome derived at session end by comparing what actually
+changed against the Budget the plan predicted:
 
-Past about three files, `plan-challenger` reads the drafted plan — not the code —
-and argues for less: what to cut, what the smaller version would be, and whether
-the failing test named in the plan would actually fail on a broken
-implementation.
+| Outcome | Means |
+|---|---|
+| `held` | the session stayed inside its own forecast |
+| `reworked` | it ran to twice the predicted files or lines — the plan was redesigned while being built |
+| `open` | the plan wrote no Budget, so nothing was measured |
 
-It exists because of an asymmetry. The review phase has six independent finders
-and a refuter. The plan phase had one voice, at the moment a wrong decision is
-most expensive, and everything downstream only checks whether the code matches
-the plan — **nothing else asks whether the plan was right.**
+A plan that reverses an earlier decision names it as `Supersedes: r12`. The old
+entry leaves the index, stays in the file, and points at its replacement — so a
+retired rule stops being cited as current, which is the specific way an
+append-only memory goes wrong.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/roadmap.py" show            # index only, ~40 tokens per entry
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/roadmap.py" show r14        # one entry
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/roadmap.py" touching src/auth/session.ts
+```
+
+`show` prints one line per decision still in force rather than the whole file.
+On a real 36KB roadmap that is 458 tokens instead of about 9,000, and an entry
+marked `reworked` is the strongest evidence there is that a shape was already
+tried here and did not hold.
+
+## Something argues with the request before a plan exists
+
+The old version of this ran *after* the plan was drafted, which meant it argued
+about the plan's size. By then there was an author attached to it, and whether
+the thing was worth building at all had been settled by nobody.
+
+`plan` now starts by counting what can be counted — how many commits have
+already rewritten the files you named, what the roadmap recorded about them,
+whether the repo can test itself — and routes on it:
+
+| Route | When | What runs |
+|---|---|---|
+| **A** | the goal is concrete *and* something automated can prove it | Nothing. Failing test, fix, review |
+| **B** | one of those two is soft | The challenger, then one design |
+| **C** | the goal is vague, or only a person can say it worked | The challenger, then **two competing designs** |
+
+The **challenger** (opus) runs before anything is drafted and returns what the
+user story actually is, what in the code contradicts the request (file and
+line), what past decision it reverses, churn counts, whether the thing already
+exists — and a verdict that includes *don't build this*. An objection carrying a
+citation **blocks** and is put to you; one from judgement is relayed and
+labelled advisory. That split is the point: a blocking question you open and
+find unsupported teaches you to click through the next one.
+
+On route C, two **designer** agents answer the same request under opposed
+framings — smallest change that works, versus the structure this actually needs
+— without seeing each other. The lead diffs them and presents **Agreed** and
+**Diverged**. It does not pick, and there is no judge agent: every model here is
+the same family, so a judge shares the blind spot that produced the
+disagreement, and a judge that picks for you rebuilds the dynamic this exists to
+stop.
+
+## Thinning the surface
+
+Fourteen skills carried `user-invocable: false`, which hides them from your
+slash menu but **not** from the model-facing listing. That is 28 advertised
+entry points for a plugin with one flow.
+
+- The `lens-*` skills became pages under `references/lenses/`. They carry no
+  tools and no model — they are knowledge, and being read as information is what
+  they already were. How one gets picked is described below.
+- `crew` folded into `review`; its lens-picking half became obsolete the moment
+  agents started loading their own.
+- `simplify` and `verify-tests` were deleted. Nothing invoked either.
+- `report` and `switch` became scripts you run directly.
+
+Skills went 17 → 3, and the listing 28 → 13. The contract template lost
+*Surfaces touched*, *Reuse*, *Risks* and *What you did not say*; it gained
+**Prediction** — what breaks if this design is wrong, and what would show it —
+which is the one section that makes a design correctable in a single move
+instead of rediscovered from scratch.
 
 ## Building in parallel
 
@@ -226,9 +340,31 @@ against a detached worktree of `HEAD` — and only genuinely new diagnostics are
 reported. This is the single most important behaviour in the plugin.
 
 **One job needs several kinds of expertise at once.** Domain knowledge lives in
-lens skills that auto-load by file path; jobs live in role agents that run in
-their own context. A role declares the lenses it needs, so a single reviewer can
-hold frontend, backend, database and Python at the same time.
+fourteen lens pages under `references/lenses/`; jobs live in role agents that run
+in their own context, so a single reviewer can hold frontend, backend, database
+and Python at once.
+
+Which lenses it gets was, for a while, decided purely by matching file paths, and
+that was wrong in a way worth writing down. A path *correlates* with a domain and
+does not determine one: `src/checkout/handler.ts` builds SQL from a request body
+and matches no security pattern by name, and `internal/store.go` running a
+migration matched nothing at all — so it was reviewed with no domain knowledge
+and nothing said so. Matching harder does not fix that; the next proxy has the
+next silent miss, and somebody maintains the patterns forever.
+
+So the split is now by what is actually knowable where:
+
+| | Decided by | Because |
+|---|---|---|
+| Language lens | `SubagentStart`, from the extension | a `.py` file **is** Python. A fact, not a guess |
+| Subject lens | `SubagentStart`, from the agent | `reviewer-security` always needs security |
+| Domain lens | **the agent, reading the diff** | only the thing holding the change knows what it is about |
+
+The agent gets the full catalogue at startup and picks. That used to be a line in
+a brief, which is to say it was skipped exactly as often as instructions are — so
+`SubagentStop` now blocks a reviewer that is about to report with no lens behind
+it at all, and tells it where the pages are. Blocked once per agent, never twice,
+because a transcript that lags is not a reason to trap an agent in a loop.
 
 **A fresh context beats a smarter one, for reading.** Every role runs in a window
 spent entirely on its own question, and returns a conclusion rather than its
@@ -256,9 +392,12 @@ Where the guess is wrong, `.harness.json` at the repo root corrects it:
 
 ## Measuring whether it works
 
-`/harness:report` reads real token counts from session transcripts — including
+`scripts/ledger.py` reads real token counts from session transcripts — including
 the cache-read and cache-write split, which is where most of the money usually
-is.
+is. It also prints **lines changed per file touched, bucketed by session
+length** — the rework figure the 0.8 flow exists to move. A file rewritten
+thirteen times is not thirteen files' worth of work, and that ratio rising with
+session length is the design changing while it is being built.
 
 For the harder question — whether a cheaper model with the harness beats an
 expensive one without it — the honest answer is that nothing in this repo
@@ -267,11 +406,11 @@ with and without the plugin and graded the result with tests the model never
 saw, but it drove both arms through `claude -p`: headless mode cannot approve a
 plan, and `implement` hard-stops without `status: approved`, so the crew never
 launched and no subagent ran in either arm. Its one recorded result — harness
-$0.242 vs bare $0.216, a 12% delta — is itself the proof: one Opus `architect`
-call alone costs $0.146, so no fan-out happened in either run. It has been
+$0.242 vs bare $0.216, a 12% delta — is itself the proof: one Opus judgement
+agent alone costs $0.146, so no fan-out happened in either run. It has been
 deleted rather than kept as a false measurement. Any future answer to this
-question has to come from the ledger on real sessions — see `/harness:report`
-— not from a synthetic rig.
+question has to come from the ledger on real sessions — see
+`scripts/ledger.py` — not from a synthetic rig.
 
 The eval cases it would have run (`evals/cases/`) stay, because they discriminate
 on their own terms and are checked without spending on a model:
@@ -300,7 +439,7 @@ is worth switching to if early access opens up on this account.
   gate — but not the per-edit check, which needs a file path the shell does not
   provide. A shell edit is caught at the end of the turn rather than the moment it
   is made.
-- **`/harness:report` double-counts a resumed session.** It appends one entry per
+- **The ledger double-counts a resumed session.** It appends one entry per
   `SessionEnd`, each a full re-read of the transcript, so a session resumed
   several times is summed that many times over. Subagent cost — reviewers,
   judgement agents and workers — is counted, and reported apart from the lead's

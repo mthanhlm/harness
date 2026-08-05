@@ -24,6 +24,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import lens_gate
 from detect import checks_for_file, get_profile
 from runner import run_file_check, trim
 from state import (
@@ -34,8 +35,8 @@ from state import (
     read_json,
     repo_root,
     shard_path,
+    shard_update,
     trace,
-    write_json,
     writer_id,
 )
 
@@ -83,10 +84,32 @@ def main() -> int:
         trace("SubagentStop", session_id, "skipped: no agent id on payload")
         return 0
 
-    path = shard_path(session_id, writer)
-    shard = read_json(path, default=None)
+    shard = read_json(shard_path(session_id, writer), default=None)
     if isinstance(shard, dict) and shard.get("stop_checked"):
         trace("SubagentStop", session_id, "skipped: already checked", agent=writer[:8])
+        return 0
+
+    # Before the read-only early return below, because reviewers are exactly the
+    # agents this applies to and they write nothing at all.
+    agent = lens_gate.bare_name(event.get("agent_type"))
+    reason = lens_gate.verdict(
+        agent,
+        (shard or {}).get("lenses_injected") or [],
+        lens_gate.lenses_read(lens_gate.agent_transcript(event)),
+    )
+    if reason and not (shard or {}).get("lens_gate_fired"):
+        # Once per agent. The transcript is written asynchronously and can lag
+        # the conversation, so a read at the very end may not be visible yet —
+        # one block costs a cycle, blocking on a stale read costs the task.
+        #
+        # Through `shard_update`, which re-reads under the lock. Writing back the
+        # snapshot taken above would put whatever the shard held then over
+        # whatever it holds now, and what it holds is `files_touched` — the list
+        # the scope fence checks against the plan.
+        with shard_update(session_id, writer) as record:
+            record["lens_gate_fired"] = True
+        trace("SubagentStop", session_id, "blocked: no lens", agent=agent)
+        emit({"decision": "block", "reason": reason})
         return 0
 
     files = _own_files(session_id, writer)
@@ -114,9 +137,11 @@ def main() -> int:
             if result.blocking:
                 failures.append((target.name, result))
 
-    if isinstance(shard, dict):
-        shard["stop_checked"] = True
-        write_json(path, shard)
+    # Written after the checks, which take as long as the repo's tools take. The
+    # snapshot read before them is stale by now, so this re-reads under the lock
+    # rather than putting the old one back.
+    with shard_update(session_id, writer) as record:
+        record["stop_checked"] = True
 
     # A slice this wide was cut wrong, and silently checking part of it would
     # read as "verified" when most of it never was.

@@ -68,15 +68,8 @@ def test_the_catalogue_offers_every_lens():
     assert all(l["domain"] for l in lens_catalogue())
 
 
-def test_every_lens_has_a_skill_behind_it():
-    """A registry entry with no skill directory is a lens that silently never loads."""
-    skills = Path(__file__).resolve().parent.parent / "skills"
-    for lens in registry()["lenses"]:
-        assert (skills / lens["name"] / "SKILL.md").is_file(), lens["name"]
-
-
 def test_the_report_carries_both_halves(tmp_path):
-    """The script's output is the whole interface the crew skill reads."""
+    """The script's output is the whole interface the review skill reads."""
     proc = subprocess.run(
         [sys.executable, str(SCRIPTS / "crew.py"), "after", "add an endpoint"],
         capture_output=True,
@@ -88,5 +81,39 @@ def test_the_report_carries_both_halves(tmp_path):
     report = json.loads(proc.stdout)
     assert report["task"] == "add an endpoint"
     assert "lenses_from_files" in report
-    assert report["lens_catalogue"], "the catalogue must never be empty"
     assert [r["name"] for r in report["roles_always"]]
+    assert [r["subagent_type"] for r in report["roles_always"]]
+
+
+def test_the_report_no_longer_ships_the_lens_catalogue():
+    """Each agent now loads its own domain knowledge from the paths it is given.
+    Shipping the catalogue here made the lead pick lenses on behalf of agents
+    that had already picked better — and a second, worse selection mechanism
+    competing with a working one is how the first got built."""
+    report = json.loads(
+        subprocess.run(
+            [sys.executable, str(SCRIPTS / "crew.py"), "after", "x"],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout
+    )
+    assert "lens_catalogue" not in report
+
+
+def test_a_directory_pattern_matches_that_directory_at_the_repo_root():
+    """`**/evals/**` against `evals/cases/a.py`.
+
+    The leading `**/` has nothing to consume when the directory is at the root,
+    so fnmatch misses it and so did both of the special cases beside it. Two
+    lenses had declared patterns in this shape since before 0.8 and neither had
+    ever fired on a top-level directory — silently, because a lens that does not
+    load produces a review that looks exactly like a thorough one.
+    """
+    assert "lens-evaluation" in lenses("evals/cases/a.py")
+    assert "lens-evaluation" in lenses("packages/api/evals/cases/a.py")
+    assert "lens-resilience" in lenses("jobs/nightly.py")
+
+
+def test_a_directory_pattern_does_not_match_a_similarly_named_file():
+    """`**/jobs/**` is a directory, not a prefix. `jobsboard.ts` is not a job."""
+    assert "lens-resilience" not in lenses("src/jobsboard.ts")
+    assert "lens-evaluation" not in lenses("src/evaluations.md")

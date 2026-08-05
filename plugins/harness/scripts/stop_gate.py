@@ -216,7 +216,9 @@ def _pending_contract_note(session_id: str) -> str | None:
     )
 
 
-def _run_until_failure(checks: list[dict], root: Path) -> tuple[list, list, list]:
+def _run_until_failure(
+    checks: list[dict], root: Path
+) -> tuple[list, list, list, list]:
     """Run project checks cheapest-first, stopping at the first blocking failure.
 
     There is no value in spending a minute on a bundle when the type-checker has
@@ -228,10 +230,17 @@ def _run_until_failure(checks: list[dict], root: Path) -> tuple[list, list, list
     to fix something nobody asked about.
     """
     checks = sorted(checks, key=lambda c: COST_ORDER.get(c["kind"], 9))
-    passed, failed, inherited = [], [], []
+    passed, failed, inherited, skipped = [], [], [], []
     for check in checks:
         started = time.monotonic()
         result = run_project_check(check, root)
+        if result.skipped:
+            # Timed out, or the binary is not installed. Not a failure, and
+            # emphatically not a pass — reporting `pytest` as verified when the
+            # suite never finished is the plugin telling the user something it
+            # does not know.
+            skipped.append(result)
+            continue
         if result.ok:
             passed.append(result)
             continue
@@ -245,9 +254,14 @@ def _run_until_failure(checks: list[dict], root: Path) -> tuple[list, list, list
             if broken_at_head:
                 inherited.append(result)
                 continue
+            # False means HEAD was clean, so this failure is genuinely the
+            # session's. None means the comparison never happened — no git, or a
+            # worktree that could not be built. The two are recorded apart so the
+            # block message can say which one it is instead of implying the first.
+            result.new_since_head = True if broken_at_head is False else None
         failed.append(result)
         break
-    return passed, failed, inherited
+    return passed, failed, inherited, skipped
 
 
 def main() -> int:
@@ -373,20 +387,24 @@ def main() -> int:
         trace("Stop", session_id, "running project checks",
               files=len(touched), lines=lines_now)
 
-        passed, failed, inherited = _run_until_failure(checks, root)
+        passed, failed, inherited, skipped = _run_until_failure(checks, root)
         session["heavy_ran_at"] = ran_at
 
         blocking = [r for r in failed if r.check.get("blocking", True)]
         if not blocking:
             trace("Stop", session_id, "passed",
                   ok=[r.label for r in passed],
-                  inherited=[r.label for r in inherited])
+                  inherited=[r.label for r in inherited],
+                  unverified=[r.label for r in skipped])
             session["consecutive_stop_blocks"] = 0
             # Whatever was broken is fixed; forget it, so a later unchanged turn
             # can take the cheap skip again instead of re-running the suite.
             session["heavy_blocked"] = {}
             notes = [f"{r.label} reports issues" for r in failed]
             notes += [f"{r.label} was already failing before this session" for r in inherited]
+            # Named individually rather than counted. "1 check skipped" is a
+            # number nobody acts on; "pytest timed out after 300s" is a fact.
+            notes += [f"{r.label} did not run ({r.skipped}) — NOT verified" for r in skipped]
             if pending:
                 notes.append(pending)
             if notes:
@@ -425,8 +443,9 @@ def main() -> int:
                 {
                     "systemMessage": (
                         f"harness: {result.label} still failing after {attempts} attempts —"
-                        " letting the turn end. The project is broken; run /harness:switch off"
-                        " if you want to work on it without the gate."
+                        " letting the turn end. The project is broken; to work on it"
+                        " without the gate, run `python3"
+                        f" {Path(__file__).resolve().with_name('switch.py')} off`."
                     )
                 }
             )
@@ -439,6 +458,24 @@ def main() -> int:
         session["consecutive_stop_blocks"] = attempts
 
         verified = ", ".join(r.label for r in passed) or "none"
+        if skipped:
+            verified += "; NOT verified: " + ", ".join(f"{r.label} ({r.skipped})" for r in skipped)
+        # Two different facts, and they used to be delivered in the same sentence.
+        # "It might predate your changes" is misleading when a clean checkout of
+        # HEAD was just built and passed, and the model wastes the turn hedging
+        # about it; the same sentence is the only warning available when the
+        # comparison never ran at all. Say which one happened.
+        if result.new_since_head:
+            provenance = (
+                "This failure does not reproduce on a clean checkout of HEAD, so this"
+                " session caused it. Fix the cause rather than suppressing the check."
+            )
+        else:
+            provenance = (
+                "This was NOT compared against HEAD, so whether this session caused it"
+                " is unknown. Check before assuming it is yours to fix, and say so"
+                " plainly if it predates your changes."
+            )
         emit(
             {
                 "decision": "block",
@@ -449,8 +486,7 @@ def main() -> int:
                         f"The turn is not finished: `{result.label}` fails across the project.\n\n"
                         f"{output}\n\n"
                         f"Checks that did pass: {verified}.\n"
-                        "Fix the cause rather than suppressing the check. If this failure"
-                        " predates your changes, say so plainly instead of trying to fix it."
+                        f"{provenance}"
                     ),
                 },
             }

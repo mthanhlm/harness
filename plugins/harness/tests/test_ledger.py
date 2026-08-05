@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import ledger
 
 
@@ -125,3 +127,149 @@ def test_an_entry_written_before_subagents_were_counted_still_reads():
     summary = ledger.summarize([old])
 
     assert "$5.00" in summary
+
+
+def _session(turns: int, files: int, lines: int, contract: bool = False) -> dict:
+    return {
+        "usage": {"cost_usd": 1.0, "total_cost_usd": 1.0, "assistant_turns": turns},
+        "files_touched": files,
+        "lines_changed": lines,
+        "checks_run": 0,
+        "contract": contract,
+    }
+
+
+def test_rework_separates_sessions_by_how_long_they_ran():
+    """The number the 0.8 flow exists to move.
+
+    Lines changed *per file touched* is not a size measure. A session that
+    touches nine files at four hundred lines apiece did not write four hundred
+    lines nine times — it wrote a hundred and rewrote them, because the design
+    changed while it was being built. That figure rising with session length is
+    the whole diagnosis.
+    """
+    rows = dict(
+        (name, ratio)
+        for name, _, ratio, _ in ledger.rework(
+            [_session(20, 2, 20), _session(300, 3, 400), _session(900, 4, 540)]
+        )
+    )
+
+    assert rows["short"] == 10
+    assert rows["long"] == pytest.approx(133.3, abs=0.1)
+    assert rows["marathon"] == 135
+
+
+def test_rework_pools_a_bucket_rather_than_averaging_its_ratios():
+    """A session that touched one file and rewrote it once, next to one that
+    touched twenty. Averaging the two ratios lets the small session count as
+    much as the large one and hides the churn that costs money."""
+    rows = {name: ratio for name, _, ratio, _ in ledger.rework([_session(300, 1, 10), _session(300, 19, 1990)])}
+
+    assert rows["long"] == 100, "20 files and 2000 lines is 100, not the mean of 10 and 105"
+
+
+def test_a_session_that_changed_nothing_has_no_ratio():
+    """`lines / files` with no files is a crash, and counting it as zero drags
+    the figure down with sessions that never wrote anything."""
+    assert ledger.rework([_session(300, 0, 0)]) == []
+
+
+def test_rework_reports_how_many_of_each_bucket_were_planned():
+    """The second scoreboard number. If the flow still does not run, the first
+    one cannot move — the flow is the only thing that writes the memory the
+    whole design depends on."""
+    rows = {name: planned for name, _, _, planned in ledger.rework(
+        [_session(300, 1, 10, contract=True), _session(300, 1, 10), _session(300, 1, 10),
+         _session(300, 1, 10)]
+    )}
+
+    assert rows["long"] == 25
+
+
+def test_the_summary_prints_the_rework_table_and_says_what_it_means():
+    """A reading with no rule attached measurably fails to change behaviour, and
+    there is no skill left to supply the rule in prose."""
+    summary = ledger.summarize([_session(900, 4, 540)])
+
+    assert "lines changed per file touched" in summary
+    assert "marathon" in summary
+    assert "design changing while it is being built" in summary
+
+
+def test_the_summary_states_what_it_cannot_tell_you():
+    """A session resumed several times is recorded once per SessionEnd, each a
+    fresh re-read of the whole transcript, so its cost is counted that many
+    times. This was in the report skill's prose; the skill is gone, so the
+    number has to carry its own caveat or it reads as exact."""
+    summary = ledger.summarize([_session(20, 1, 10)])
+
+    assert "resumed several times" in summary
+    assert "upper bound" in summary
+
+
+# ------------------------------------------- an unread transcript is not free
+
+
+def test_a_transcript_that_cannot_be_read_is_marked_rather_than_counted_as_zero(tmp_path):
+    """Nothing read and nothing spent are the same arithmetic and opposite facts.
+
+    Every figure the report prints is a sum over these entries, so a session
+    whose transcript could not be opened contributes $0 to the total, 0 turns to
+    the length bucket, and reads as a cheap session that went well.
+    """
+    totals = ledger.read_transcript(str(tmp_path / "gone.jsonl"))
+
+    assert totals["cost_usd"] == 0
+    assert totals["incomplete"] is True, "an unread transcript is indistinguishable from a free session"
+
+
+def test_a_transcript_that_reads_cleanly_is_not_marked(tmp_path):
+    """The other direction, so the flag cannot pass by always being set — which
+    would move every real session out of the rework table."""
+    path = tmp_path / "s.jsonl"
+    write_transcript(path, [("claude-opus-4-1", 1000)])
+
+    assert "incomplete" not in ledger.read_transcript(str(path))
+
+
+def test_the_subagent_scan_stops_on_its_deadline_and_says_so(tmp_path):
+    """`SessionEnd` hooks share a 1.5s budget and a plugin's own `timeout` cannot
+    raise it, so overrunning means the process is killed — losing the ledger line
+    and the roadmap entry written beside it. Stopping early and saying so keeps
+    both.
+    """
+    path = tmp_path / "s.jsonl"
+    write_transcript(path, [("claude-opus-4-1", 1000)])
+    subagents = tmp_path / "s" / "subagents"
+    for i in range(3):
+        write_transcript(subagents / f"agent-{i}.jsonl", [("claude-sonnet-4-5", 500)])
+
+    totals = ledger.read_transcript(str(path), budget=-1)
+
+    assert totals["incomplete"] is True
+    assert totals["subagents"]["count"] == 0, "counted subagents it never opened"
+
+
+def test_an_unpriced_session_is_left_out_of_the_rework_table():
+    """The rework figure is the one number the whole 0.8 flow exists to move, so
+    it is the one most worth protecting from a silent zero: an unread transcript
+    has no turn count, and bucketing it anyway files a nine-hundred-turn marathon
+    under `short`."""
+    real = {"files_touched": 2, "lines_changed": 400, "usage": {"assistant_turns": 900}}
+    unread = {"files_touched": 2, "lines_changed": 400, "usage": {"incomplete": True}}
+
+    buckets = {name for name, *_ in ledger.rework([real, unread])}
+
+    assert buckets == {"marathon"}, f"an unpriced session was bucketed by a turn count it does not have: {buckets}"
+
+
+def test_the_report_says_when_the_totals_are_only_a_floor():
+    """Otherwise a total summed over sessions that contributed nothing reads as a
+    measurement."""
+    out = ledger.summarize([
+        {"files_touched": 1, "lines_changed": 10, "checks_run": 1, "usage": {"cost_usd": 5.0}},
+        {"files_touched": 1, "lines_changed": 10, "checks_run": 1, "usage": {"incomplete": True}},
+    ])
+
+    assert "lower bound" in out, "an unpriced session was folded into the total in silence"

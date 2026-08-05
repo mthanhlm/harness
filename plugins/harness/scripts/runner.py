@@ -39,7 +39,23 @@ PROJECT_CHECK_TIMEOUT = 300
 # A pattern loose enough to catch every tool's path format is also loose enough
 # to erase the difference between two genuinely different diagnostics, and
 # erasing that difference means silently swallowing a real new error.
-_NUM_RE = re.compile(r"\b\d+\b")
+#
+# The same argument applies to numbers, and this used to get it wrong: every
+# `\b\d+\b` was replaced, so `Expected 2 arguments, but got 1` and `Expected 5
+# arguments, but got 3` normalised to the same key. A genuinely new type error
+# was then indistinguishable from a pre-existing one and silently swallowed —
+# the exact failure the paragraph above exists to avoid.
+#
+# Only numbers that *move when a line is inserted above them* need erasing, and
+# those appear in known positions: attached to the redacted filename, in a
+# traceback's `line N`, or in a rich diagnostic's gutter. Numbers in the body of
+# a message — arity, error codes, limits — are semantic and are what tells two
+# different problems apart, so they stay.
+_POSITION_RES = (
+    re.compile(r"FILE[(:]\d+(?:[,:]\d+)?\)?"),   # FILE:40:5  FILE(40,5)  FILE:40
+    re.compile(r"\bline \d+", re.IGNORECASE),    # Python and shell tracebacks
+    re.compile(r"^\s*\d+\s*(?=\|)"),             # rustc/ruff source gutter
+)
 
 
 @dataclass
@@ -49,6 +65,11 @@ class Result:
     output: str
     skipped: str | None = None
     new_diagnostics: list[str] = field(default_factory=list)
+    # Whether this failure was confirmed absent on a clean checkout of HEAD.
+    # None means the question was never asked or could not be answered — which is
+    # a different fact from "no", and reporting the two the same way is how the
+    # model gets sent to fix breakage that was there before it arrived.
+    new_since_head: bool | None = None
 
     @property
     def label(self) -> str:
@@ -59,7 +80,16 @@ class Result:
         return bool(self.check.get("blocking", True)) and not self.ok and not self.skipped
 
 
-def _run(argv: list[str], cwd: Path, timeout: int) -> tuple[bool, str]:
+def _run(argv: list[str], cwd: Path, timeout: int) -> tuple[bool, str, str | None]:
+    """`(ok, output, why_it_did_not_really_run)`.
+
+    The third value is the whole point and it used to be missing. A timeout and a
+    missing binary both returned "ok", which is right about not blocking and
+    wrong about everything else: the caller could not tell them from a genuine
+    pass, so a test suite that timed out was reported to the user as *"checks
+    that did pass: pytest"*. Silence about a check that never ran is worse than
+    the check not existing, because the user believes it.
+    """
     try:
         proc = subprocess.run(
             argv,
@@ -70,11 +100,12 @@ def _run(argv: list[str], cwd: Path, timeout: int) -> tuple[bool, str]:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return True, ""  # Treated as a pass: a slow tool must never block.
+        # Not a failure — a slow tool must never block — but not a pass either.
+        return True, "", f"timed out after {timeout}s"
     except (OSError, ValueError) as exc:
-        return True, f"{exc}"  # Missing or unrunnable tool is never grounds to block.
+        return True, f"{exc}", f"could not be run: {exc}"
     output = (proc.stdout or "") + (proc.stderr or "")
-    return proc.returncode == 0, output.strip()
+    return proc.returncode == 0, output.strip(), None
 
 
 def _normalize(output: str, redact: tuple[str, ...] = ()) -> dict[str, str]:
@@ -99,7 +130,9 @@ def _normalize(output: str, redact: tuple[str, ...] = ()) -> dict[str, str]:
         key = line
         for name in names:
             key = key.replace(name, "FILE")
-        key = _NUM_RE.sub("N", key)
+        # Filenames first, so a position can be recognised by what precedes it.
+        for pattern in _POSITION_RES:
+            key = pattern.sub("POS", key)
         diagnostics.setdefault(key, line)
     return diagnostics
 
@@ -107,7 +140,7 @@ def _normalize(output: str, redact: tuple[str, ...] = ()) -> dict[str, str]:
 # Rich diagnostics render a source excerpt under each message: a gutter, a
 # caret row, an arrow to the location. Those lines carry no information on their
 # own, and listing them as findings makes two new problems look like eight.
-_CONTEXT_RE = re.compile(r"^(\||-->|\^|=|\.\.\.|N\s*\||\d+\s*\|)")
+_CONTEXT_RE = re.compile(r"^(\||-->|\^|=|\.\.\.|POS\s*\||N\s*\||\d+\s*\|)")
 
 
 def _headlines(diagnostics: dict[str, str], keys: set[str]) -> list[str]:
@@ -147,8 +180,16 @@ def _baseline_content(root: Path, target: Path) -> str | None:
 
 def _diagnostics_at_head(
     check: dict[str, Any], root: Path, target: Path, timeout: int
-) -> dict[str, str] | None:
+) -> tuple[dict[str, str] | None, str | None]:
     """Re-run the check against the pre-edit version of the file.
+
+    Returns `(diagnostics, why_unknown)`. Those are three different answers and
+    conflating two of them was a real bug: a baseline that *could not be run*
+    returned an empty diagnostic set, identical to a baseline that ran and found
+    nothing — so every pre-existing problem in the file looked new and the edit
+    was blocked for breakage it did not cause. That is the single failure this
+    whole module exists to prevent, and a slow type-checker was enough to trigger
+    it.
 
     The temporary copy is written beside the original so that everything a tool
     resolves by location — tsconfig, ruff settings, eslint config, import
@@ -156,7 +197,7 @@ def _diagnostics_at_head(
     """
     content = _baseline_content(root, target)
     if content is None:
-        return None
+        return None, None  # No baseline exists: the file is new, so all of it is.
     handle = None
     try:
         handle = tempfile.NamedTemporaryFile(
@@ -171,10 +212,12 @@ def _diagnostics_at_head(
             handle.write(content)
         copy = Path(handle.name)
         argv = [a.replace("{file}", str(copy)) for a in check["argv"]]
-        _, output = _run(argv, root, timeout)
-        return _normalize(output, _names_for(root, copy))
-    except OSError:
-        return None
+        _, output, skipped = _run(argv, root, timeout)
+        if skipped:
+            return None, skipped
+        return _normalize(output, _names_for(root, copy)), None
+    except OSError as exc:
+        return None, f"baseline copy failed: {exc}"
     finally:
         if handle is not None:
             Path(handle.name).unlink(missing_ok=True)
@@ -182,12 +225,18 @@ def _diagnostics_at_head(
 
 def run_file_check(check: dict[str, Any], root: Path, target: Path) -> Result:
     argv = [a.replace("{file}", str(target)) for a in check["argv"]]
-    ok, output = _run(argv, root, FILE_CHECK_TIMEOUT)
+    ok, output, skipped = _run(argv, root, FILE_CHECK_TIMEOUT)
+    if skipped:
+        return Result(check, True, output, skipped=skipped)
     if ok:
         return Result(check, True, output)
 
     current = _normalize(output, _names_for(root, target))
-    baseline = _diagnostics_at_head(check, root, target, FILE_CHECK_TIMEOUT)
+    baseline, unknown = _diagnostics_at_head(check, root, target, FILE_CHECK_TIMEOUT)
+    if unknown:
+        # The baseline could not be established, so nothing here is attributable.
+        # Never block on a comparison that did not happen.
+        return Result(check, True, output, skipped=f"no baseline: {unknown}")
     if baseline is None:
         # New or untracked file: nothing in it predates the edit.
         return Result(check, False, output, new_diagnostics=_headlines(current, set(current)))
@@ -209,8 +258,8 @@ def run_file_check(check: dict[str, Any], root: Path, target: Path) -> Result:
 
 
 def run_project_check(check: dict[str, Any], root: Path, timeout: int = PROJECT_CHECK_TIMEOUT) -> Result:
-    ok, output = _run(list(check["argv"]), root, timeout)
-    return Result(check, ok, output)
+    ok, output, skipped = _run(list(check["argv"]), root, timeout)
+    return Result(check, ok, output, skipped=skipped)
 
 
 # A baseline run costs about as much as the failing run did. Paying that to
@@ -260,7 +309,9 @@ def project_check_at_head(check: dict[str, Any], root: Path, timeout: int) -> bo
                     pass
 
         argv = [a.replace(str(root), str(worktree)) for a in check["argv"]]
-        ok, _ = _run(argv, worktree, timeout)
+        ok, _, skipped = _run(argv, worktree, timeout)
+        if skipped:
+            return None  # Could not answer. Same bug as above if reported as clean.
         return not ok
     except (OSError, _sp.SubprocessError):
         return None

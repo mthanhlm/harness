@@ -25,6 +25,7 @@ confirms the edit introduced them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -39,10 +40,10 @@ from state import profiles_dir, read_json, repo_key, write_json
 FAST_KINDS = ("syntax", "format", "lint", "typecheck")
 HEAVY_KINDS = ("typecheck", "lint", "test", "build")
 
-PROFILE_VERSION = 10
+PROFILE_VERSION = 11
 
-# Presence or content of these decides the profile, and changes to any of them
-# invalidate the cache.
+# Which ecosystem this is. Presence of one of these is what `build_profile`
+# branches on.
 MANIFESTS = (
     "package.json",
     "tsconfig.json",
@@ -50,6 +51,7 @@ MANIFESTS = (
     "requirements.txt",
     "pytest.ini",
     "setup.cfg",
+    "setup.py",
     "tox.ini",
     "go.mod",
     "Cargo.toml",
@@ -60,6 +62,56 @@ MANIFESTS = (
     "deno.json",
     ".harness.json",
 )
+
+# Which *tools* to run, which is a separate question and used to be fingerprinted
+# by nothing at all.
+#
+# The cache was keyed on the ecosystem manifests alone, so the profile only ever
+# rebuilt when something like `package.json` changed. Setting a linter up does
+# not touch those files: you add `.eslintrc.json` and run an install. Both were
+# invisible here, no other rebuild trigger exists and there was no expiry — so a
+# repo detected once before its tooling was configured kept its syntax-only
+# profile permanently, and the session banner went on reporting that as the
+# answer. Silent, indefinite, and in the direction of checking nothing.
+#
+# Every path `_opted_in` and `_local_bin` consult belongs in one of these three.
+TOOL_SIGNALS = (
+    # Lockfiles: these move whenever a project-local tool is installed or removed.
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
+    "bun.lock",
+    # Per-tool config, which is what `_opted_in` reads as the repo opting in.
+    "biome.json",
+    "biome.jsonc",
+    ".oxlintrc.json",
+    "oxlint.json",
+    "eslint.config.js",
+    "eslint.config.mjs",
+    ".eslintrc",
+    ".eslintrc.json",
+    ".eslintrc.cjs",
+    ".prettierrc",
+    ".prettierrc.json",
+    "prettier.config.js",
+    "ruff.toml",
+    ".ruff.toml",
+    ".flake8",
+    "mypy.ini",
+    ".mypy.ini",
+    "pyrightconfig.json",
+)
+
+# Directories whose *contents* decide a check. A binary appearing in one of these
+# is what `_local_bin` resolves, and the directory's own mtime moves when it does.
+TOOL_DIRS = ("node_modules/.bin", ".venv/bin", "venv/bin")
+
+# A backstop for the one input that cannot be fingerprinted: a tool installed
+# globally, where nothing inside the repo changes at all. Rebuilding costs a few
+# file stats and some `which` lookups, so the ceiling on how long a wrong answer
+# can persist is worth far more than the work it saves.
+PROFILE_MAX_AGE = 12 * 3600
 
 TS_EXT = (".ts", ".tsx", ".mts", ".cts")
 JS_EXT = (".js", ".jsx", ".mjs", ".cjs")
@@ -436,13 +488,31 @@ def _universal_checks() -> list[dict[str, Any]]:
 
 
 def _fingerprint(root: Path) -> str:
+    """A digest of everything inside the repo that detection reads.
+
+    `requirements*.txt` is globbed rather than named because `_has_pytest` globs
+    it too, and a dependency declared in `requirements-dev.txt` decides whether
+    the test check exists.
+    """
+    names = [*MANIFESTS, *TOOL_SIGNALS, *sorted(p.name for p in root.glob("requirements*.txt"))]
     parts = []
-    for name in MANIFESTS:
+    for name in dict.fromkeys(names):
         try:
             stat = (root / name).stat()
-            parts.append(f"{name}:{int(stat.st_mtime)}:{stat.st_size}")
+            parts.append(f"{name}:{stat.st_mtime}:{stat.st_size}")
         except OSError:
             continue
+    for name in TOOL_DIRS:
+        # By contents, not by the directory's mtime. mtime has one-second
+        # resolution on most filesystems, so a tool installed and removed inside
+        # the same second left the fingerprint unchanged — and unlike a file,
+        # a directory has no size to break the tie. Listing is exact and the
+        # directories are small.
+        try:
+            listing = ",".join(sorted(p.name for p in (root / name).iterdir()))
+        except OSError:
+            continue
+        parts.append(f"{name}/:{hashlib.sha256(listing.encode('utf-8')).hexdigest()[:16]}")
     return "|".join(parts)
 
 
@@ -462,7 +532,7 @@ def _dedupe(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     An empty set on the file-check side is likewise inert, for the same reason.
     """
     file_checks = [c for c in checks if c["scope"] == "file"]
-    out = []
+    out: list[dict[str, Any]] = []
     for check in checks:
         if check["scope"] == "project" and check["kind"] != "test" and check["extensions"]:
             project_ext = set(check["extensions"])
@@ -471,6 +541,22 @@ def _dedupe(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 for fc in file_checks
             ):
                 continue
+        # And drop a project check another project check already covers. A repo
+        # with `"typecheck": "tsc --noEmit"` in package.json *and* a tsconfig.json
+        # — the ordinary shape of a TypeScript project — got both `npm run
+        # typecheck` and `tsc --noEmit`, which are the same command, so the
+        # end-of-turn gate ran the slowest check in the profile twice.
+        #
+        # First wins, and `build_profile` puts declared scripts ahead of guessed
+        # ones, so this resolves the way the authority order at the top of the
+        # file says it should: what the repo declares beats what we inferred.
+        if check["scope"] == "project" and any(
+            kept["scope"] == "project"
+            and kept["kind"] == check["kind"]
+            and set(kept["extensions"]) & set(check["extensions"])
+            for kept in out
+        ):
+            continue
         out.append(check)
     return out
 
@@ -557,7 +643,7 @@ def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:
     Both are honoured on sight. A repository can therefore switch its own checks
     off by committing this file, which is the accepted cost of having no
     approval step: the same file that lets a repo correct a wrong detection lets
-    it disarm a correct one. `/harness:switch` is the user's own control.
+    it disarm a correct one. `scripts/switch.py off` is the user's own control.
 
     Applied at build time, so it is baked into the cached profile. `.harness.json`
     is in MANIFESTS, so editing it changes the fingerprint and forces a rebuild.
@@ -579,10 +665,25 @@ def _apply_overrides(root: Path, profile: dict[str, Any]) -> None:
         profile["checks"] = [c for c in profile["checks"] if c.get("kind") not in kinds]
 
 
+def _stale(cache: Path) -> bool:
+    """Whether the cache is old enough to be worth re-deriving from scratch.
+
+    The cache file's own mtime is the age, so nothing has to be stored inside the
+    profile to track this. A missing file reads as stale, which is what a rebuild
+    needs anyway.
+    """
+    import time
+
+    try:
+        return (time.time() - cache.stat().st_mtime) > PROFILE_MAX_AGE
+    except OSError:
+        return True
+
+
 def get_profile(root: Path, *, refresh: bool = False) -> dict[str, Any]:
-    """Load the cached profile, rebuilding when the repo's manifests changed."""
+    """Load the cached profile, rebuilding when the repo's tooling changed."""
     cache = profiles_dir() / f"{repo_key(root)}.json"
-    if not refresh:
+    if not refresh and not _stale(cache):
         cached = read_json(cache, default=None)
         if (
             isinstance(cached, dict)

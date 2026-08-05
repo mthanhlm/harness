@@ -28,6 +28,7 @@ from pathlib import Path
 
 import contract as contract_mod
 import local_ignore
+import lsp
 import roadmap
 import session_end
 from detect import get_profile
@@ -93,7 +94,39 @@ def _describe(profile: dict) -> str:
             "No project tooling was detected, so only syntax checks run."
             " Verification for this repo has to come from something you run yourself."
         )
+
+    # Said here because it is said nowhere else. A language server whose binary
+    # is absent is skipped silently, and the reason surfaces only in the
+    # `/plugin` Errors tab. Empty whenever the servers for this repo's languages
+    # are already installed, which is the case that has to stay silent.
+    advice = lsp.advisory(profile)
+    if advice:
+        lines.append(f"\n{advice}")
     return "\n".join(lines)
+
+
+def _contract_line(session_id: str) -> str:
+    """Where this session's plan goes, spelled out rather than described.
+
+    The skills used to name it as `${CLAUDE_PLUGIN_DATA}/contracts/${CLAUDE_SESSION_ID}.md`.
+    The first half works — Claude Code substitutes `${CLAUDE_PLUGIN_DATA}` into
+    skill text before the model sees it. The second half is not a placeholder and
+    not a shell variable, so it reached the model verbatim: real transcripts
+    contain 225 commands naming a literal `contracts/${CLAUDE_SESSION_ID}.md`.
+
+    Getting it wrong is silent in the worst direction. A contract written under
+    any other name is a file `contract.load` never opens, so `approved` is False,
+    `scoped_files` is empty, and `stop_gate._out_of_scope` returns nothing —
+    the end-of-turn gate then certifies every edit in the session as agreed.
+
+    This hook is handed the session id in its own payload, so it can simply say.
+    """
+    return (
+        "\nThis session's plan contract belongs at exactly:\n"
+        f"  {contract_mod.contract_path(session_id)}\n"
+        "  That path is what the scope fence reads. A plan written anywhere else"
+        " leaves the fence inert while still reporting clean."
+    )
 
 
 def _listed(entries: list[str], label: str) -> str:
@@ -278,7 +311,7 @@ def main() -> int:
         session["base_commit"] = head_commit(root)
     save_session(session, reset=fresh)
 
-    context = _describe(profile)
+    context = _describe(profile) + _contract_line(event.get("session_id", "unknown"))
     carried = ""
     # Deliberately not gated on `fresh`. `clear` resets the counters — the user
     # asked for a clean slate — but it does not delete the contract, so the

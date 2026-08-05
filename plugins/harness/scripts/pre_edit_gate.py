@@ -28,6 +28,7 @@ from state import (
     read_event,
     read_json,
     session_state,
+    shard_path,
     shards_dir,
     writer_id,
 )
@@ -73,9 +74,17 @@ def _other_worker_holding(session_id: str, writer: str, target: str) -> str | No
     deny the worker that owns the test file it just wrote.
     """
     posix = Path(target).as_posix()
+    # This writer's *shard name*, not its raw id. Shard files are named through
+    # `_safe`, which rewrites anything outside `[alnum]-_`, so comparing a raw
+    # agent id against a sanitised stem would fail to match a worker's own shard —
+    # and the worker would then be denied the file it had just written itself,
+    # report the slice as one it could not take, and the slice would silently go
+    # unbuilt. Every id seen so far survives `_safe` unchanged, which is exactly
+    # what makes this the kind of thing that breaks later and quietly.
+    own = shard_path(session_id, writer).stem
     for shard in shards_dir(session_id).glob("*.json"):
         other = shard.stem
-        if other in (writer, "main"):
+        if other in (own, "main"):
             continue
         record = read_json(shard, default=None)
         if not isinstance(record, dict):

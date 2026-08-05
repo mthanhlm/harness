@@ -34,14 +34,14 @@ opinion**:
 
 | Subagent | For |
 |---|---|
-| `harness:reuse-auditor` | Does this already exist? Run it before planning any new code. |
-| `harness:architect` | Is this code worth building on — patch, refactor-first, rewrite, or don't build? |
+| `harness:challenger` | Should this be built, and is it the right thing? Runs **before** the plan. |
+| `harness:designer` | Route C only. Run **twice** under opposed framings; their divergence is the decision. |
 | `harness:reviewer-*` | The review at the end. |
 | `harness:refuter` | Kills weak findings before they reach the user. |
 
 **The `harness:` prefix is required — for the skills below as much as these
 agents.** Everything here ships inside a plugin, so both the Task tool and the
-Skill tool address it by a scoped name: `harness:architect`, not `architect`;
+Skill tool address it by a scoped name: `harness:challenger`, not `challenger`;
 `harness:implement`, not `implement`. A bare name does not resolve, and the
 observed failure is not an error message — it is falling back to `Read` on the
 skill's own `SKILL.md`. That looks like it worked. It is not the same thing: a
@@ -51,6 +51,41 @@ Launch independent ones in a **single message** so they run concurrently, and
 **wait for them — pass `run_in_background: false`.** Subagents run in the
 background by default, and you cannot draft a plan without their findings. A
 backgrounded agent here leaves you idling for a notification instead of working.
+
+## Stage 0 — How much argument has this request earned?
+
+Run this first, before reading anything:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/triage.py" "$ARGUMENTS"
+```
+
+It counts what can be counted — which named files exist, how many commits have
+already rewritten each, what the roadmap recorded about them, whether this repo
+can test itself at all — and then either forces a route or hands you the readings
+and the decision rule.
+
+**It deliberately does not read the request's language.** Whether a goal is clear
+is your judgement, and when the output says `route: YOURS TO DECIDE` you make it
+on one question: *does anyone know what done looks like?*
+
+| Route | When | What runs |
+|---|---|---|
+| **A — fix** | the goal is concrete **and** something automated can prove it | Nothing below. Write the failing test, fix it, review. No contract, no interview, no subagents. |
+| **B — change** | one of those two is soft | Stages 1–6, one design. |
+| **C — design** | the goal is vague, **or** only a person can say it worked | Stages 1–6, and stage 2b is not optional. |
+
+Two mistakes, and they cost differently. Routing a small request to C is how a
+process gets bypassed — the person you are working with has said outright that
+the current flow feels like a hard process, and a design debate over a rename is
+exactly what they mean. Routing a genuinely open question to A is how a session
+runs nine hundred turns rewriting the same four files. **When it is close, the
+tiebreaker is whether a person has to look at the result to know it worked.** If
+they do, it is not A.
+
+Say which route you took and why, in one line, before you start. If you take A on
+something the triage output argued about, say that too — you are allowed to
+overrule it, not to do so silently.
 
 ## Stage 1 — Understand what is actually wanted
 
@@ -68,8 +103,15 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
 Read what this project already decided, before deciding anything:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" show
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" show          # the index
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" show r14      # one entry
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" touching src/auth/session.ts
 ```
+
+`show` prints an index — one line per decision still in force, with its id and
+what became of it. **Open the two or three that touch this request; do not read
+them all.** The whole file used to be read here, and at 36KB that was nine
+thousand tokens spent to surface the two entries that mattered.
 
 Every session otherwise starts from nothing — the same ground gets re-covered
 and the same deferred item gets deferred again. If the roadmap names something
@@ -77,6 +119,15 @@ this request touches, say so out loud rather than silently re-litigating it. And
 if it contradicts what is being asked for now, that is worth raising: a past
 decision is evidence, not an instruction, but reversing one by accident is how a
 codebase acquires two of everything.
+
+**An entry marked `reworked` is the strongest evidence you have.** It means a
+plan of that shape was already tried here and did not survive contact with the
+code. Say so before proposing the same shape again.
+
+When this plan genuinely reverses a past decision, name it in the contract's
+`Supersedes:` line. That retires the old entry — it leaves the index and stays in
+the file, pointing at this one — instead of leaving two contradictory decisions
+both presented as current.
 
 It builds the index if it is missing, does nothing if it is already there, and
 says so plainly if CodeGraph is unavailable. Relay its line to the user when it
@@ -88,6 +139,48 @@ codegraph explore "<the capability in question>"
 
 If it reported that CodeGraph is unavailable, fall back to Grep and Glob against
 the vocabulary the codebase would plausibly use.
+
+## Stage 1b — Have the request argued with, before there is a plan to defend
+
+**Routes B and C only.** On route A, skip this entirely and go build.
+
+Launch `harness:challenger` with the request and what you have read so far. Wait
+for it — `run_in_background: false`.
+
+This is the stage the whole flow exists for, and its position is the point. The
+old flow argued *after* the plan was drafted, which meant arguing about the
+plan's size; by then there was an author attached to it and the question of
+whether the thing was worth building at all had quietly been settled by nobody.
+The challenger runs while that question is still open and it is briefed to
+answer it: what the user story actually is, what in the code contradicts the
+request, what past decision it reverses, how many times this mechanism has
+already been rewritten, whether it exists already, and a verdict that includes
+**don't build this**.
+
+**Relay what it returns, in two piles, and keep them apart.**
+
+- **Blocking** — objections carrying a citation: a file and line, a roadmap
+  entry id, or a churn count. These go to the user through `AskUserQuestion`
+  before you draft anything. They have to answer; you do not get to decide on
+  their behalf that the objection was minor.
+- **Advisory** — objections from judgement, with no evidence behind them. Relay
+  them **labelled as judgement**, and carry on. They do not stop anything.
+
+**Never promote an advisory objection into the blocking pile.** The tiers are not
+confidence levels — they are whether the user can go and check. A blocking
+question they open and find unsupported teaches them to click through the next
+one, and then the mechanism is gone and the whole stage is theatre.
+
+Then argue back yourself where you disagree. The challenger read the code cold
+and has no memory of this conversation; it is wrong sometimes, and a finding you
+have already disproved should be said so, not relayed. What must not happen is
+the objection quietly disappearing.
+
+**Their answers are the start of the interview, not a substitute for it.** A
+blocking objection they overrule goes into the contract's Disagreement section
+with their reason — on the record, and cited back by the roadmap next time.
+
+## Stage 1c — Interview
 
 **Interview them, until nothing material is unresolved.** A requirement is
 written by whoever has the problem, not by whoever knows the system, so it is
@@ -105,8 +198,8 @@ Then ask in rounds, with these four bounds:
 - **Up to four questions per round**, since `AskUserQuestion` takes four. One at
   a time is what turns an interview into an interrogation.
 - **Every round offers "use your judgement for the rest"**, which ends the
-  interview immediately and moves everything outstanding to *What you did not
-  say*. They must always be able to stop without knowing anything.
+  interview immediately and moves everything outstanding into *Disagreement*.
+  They must always be able to stop without knowing anything.
 - **Stop at three rounds**, or sooner when a round changes nothing in the draft.
   A fourth round means you are asking the code's questions, not theirs.
 
@@ -126,23 +219,86 @@ that is the normal case rather than a failing — a requirement is written by
 whoever has the problem, not by whoever knows the system. So as you read, keep a
 list of what the request did not say: the case it does not cover, the existing
 behaviour it would change without mentioning it, the thing it implies but never
-states. Each one goes in the plan's **What you did not say** section with the
-assumption you made and what changes if that assumption is wrong.
+states. Each one goes in **Disagreement** as one line — the assumption you made,
+and what changes if it is wrong.
 
 Not asking is fine. Deciding silently is not — a decision the user never saw is
 one they cannot correct, and they only find out when the built thing is wrong.
 
+## Stage 1d — Two designs, and you present the difference
+
+**Route C only.** On routes A and B, skip this and draft the plan yourself —
+running it everywhere is the ceremony that gets the whole flow bypassed.
+
+Launch `harness:designer` **twice, in a single message**, with the same request
+and opposed framings. Wait for both — `run_in_background: false`:
+
+- **A — the smallest change that could work.** Minimise new structure.
+- **B — the structure this actually needs.** Treat the existing shape as
+  evidence, not a constraint.
+
+Neither sees the other. That independence is the entire value: two samples drawn
+separately can disagree, and where they disagree is a decision that would
+otherwise have been made silently by whoever drafted first. A second designer
+that read the first can only lose information relative to it, never add any — so
+do not summarise one into the other, and do not run them in sequence.
+
+### Diff them, and do not pick
+
+Go heading by heading — Goal, User flow, Data flow, Scope, Verification,
+Prediction — and sort every point into one of two lists.
+
+- **Agreed** — both designs said the same thing. One line each, stated flatly.
+  This was forced by the problem and there is nothing to decide.
+- **Diverged** — the designs answered differently. Give **both answers and both
+  reasons**, in the designers' own terms, and say which you would choose and why.
+
+Then `AskUserQuestion` on the divergences — per point where they are independent,
+or as a whole where choosing A's data flow and B's scope would produce something
+neither designer would sign. Say which of those two it is.
+
+**You do not resolve the divergence and neither does a third agent.** Every model
+here is the same family, so a judge shares the blind spot that produced the
+disagreement, and a judge that picks for you rebuilds the thing this flow exists
+to stop — the assistant deciding and the user agreeing, in the other direction.
+Your recommendation goes first because you have read both and they have not.
+The choice is theirs.
+
+**An empty divergence list is a good outcome, not a failed stage.** It means the
+design was forced. Say so in one line and move on; do not go looking for a
+difference to justify having run two agents.
+
+The chosen design becomes the plan. Points where they agreed need no further
+argument — carry them into the contract as written, including the **Prediction**,
+which the roadmap will check against what actually happened.
+
 ## Stage 2 — Draft the whole picture
 
-Write this file, exactly this structure, to:
+Write this file, exactly this structure, to the path the harness printed at
+session start — the line beginning *"This session's plan contract belongs at
+exactly"*. If it is no longer in view, ask for it:
 
-`${CLAUDE_PLUGIN_DATA}/contracts/${CLAUDE_SESSION_ID}.md`
+```bash
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/contract.py" path
+```
+
+The environment assignment is not decoration: a shell does not inherit
+`CLAUDE_PLUGIN_DATA`, so without it the script resolves a different directory
+from the one every hook uses and prints a confident path to a file nothing reads.
+
+**Use that exact path and no other.** The scope fence reads that one file: a plan
+written under any other name leaves `status:` unread, the fence empty, and the
+end-of-turn gate certifying every edit in the session as agreed. If the command
+above cannot name the path it says so and exits non-zero — it never guesses, and
+neither should you.
 
 ```markdown
 # Plan: <one line>
 
 status: pending
 verdict: patch | refactor-first | rewrite | don't build this
+Supersedes: <roadmap ids this reverses, e.g. `r12, r14` — omit the line entirely
+if it reverses nothing, which is the normal case>
 
 ## Goal
 <What the person is trying to achieve, in their terms, not yours. One paragraph.>
@@ -156,10 +312,6 @@ experiences changes, say so — internal work is allowed to say "none".>
 <What moves where. What comes in, what it turns into, where it is stored, what
 reads it later. Name the actual tables, endpoints, files and queues. This is
 where wrong assumptions surface earliest.>
-
-## Surfaces touched
-<Which parts of the system: UI, API, database, background jobs, config,
-third-party services. One line each.>
 
 ## Scope
 Files this will change:
@@ -194,33 +346,46 @@ silently — whoever writes last wins, with no error and no conflict marker.>
 Explicitly NOT changing:
 - <the neighbouring things that will look tempting mid-task>
 
-## Reuse
-- Reusing `existingHelper()` at path/to/file.ts
-- New code needed for X because <the specific reason nothing existing fits>
-
 ## Verdict
-<Which of the four, and why — from the architect subagent. Two or three sentences.>
-
-## What you did not say
-<Every gap in the requirement, with the assumption made and what changes if it
-is wrong. One line each. This is not a list of your doubts — it is the list of
-decisions the user never got to make. Write "Nothing material." only when that
-is true after reading the code, which is rarer than it feels.>
-
-- <the gap> → assumed <X>; if it should be <Y> instead, <what changes>
+<Which of the four, and why — the challenger's verdict, where you overruled it,
+what it found already exists, and the churn count on the mechanism this touches.
+Two or three sentences.>
 
 ## Disagreement
-<Where the request is wrong and what you would do instead — or "None.">
+<Where the request is wrong and what you would do instead — or "None."
 
-## Risks
-<What could go wrong, what is still unknown, what you had to assume.>
+**Every blocking objection the user overruled goes here, with their reason**, and
+so does every gap you noticed and decided yourself rather than asking about. Both
+are decisions the user never got to make, and this is the one section the roadmap
+carries forward verbatim — so a thing argued about and settled here is what the
+next session inherits. Leave it out and the same argument happens again in a
+month, from scratch, by someone with no idea it was ever had.>
 
 ## Budget
 ~N files, ~N lines.
+<**Write this every time, and mean it.** It is not decoration: when the session
+ends, what actually changed is compared against this line, and the roadmap entry
+is recorded as `held` or `reworked` on the result. A plan that predicted four
+files and a hundred lines, executed as nine files and nine hundred, was not built
+— it was redesigned while being built, and that is the one thing this flow exists
+to catch. Omit the line and the outcome records as `open`, which teaches the next
+session nothing.>
 
 ## Verification
 Command that proves this works: `<exact command>`
 Failing test to write first: `<test name and what it asserts>`
+
+## Prediction
+- If this design is wrong, what breaks first: <the specific failure>
+- What would show it: <the observation that would reveal it, and when>
+<**Write what would falsify the design, not what might go badly.** "The migration
+could be tricky" predicts nothing and can never be checked; "if requests arrive
+out of order the second write silently wins, visible as a stale `updated_at`
+under concurrent edits" names the failure and names what you would see. This is
+what stops a design being rebuilt three times: one that stated what would break,
+and then broke that way, is corrected in one move. One that predicted nothing is
+rediscovered from scratch on every attempt. On route C, carry the designers'
+prediction across rather than writing a new one.>
 ```
 
 Two sections do the most work and are the ones people skip. **"Explicitly NOT
@@ -232,36 +397,23 @@ On **Disagreement**: if you genuinely have none, write "None." and move on. Do n
 manufacture an objection to look rigorous — an invented concern trains the reader
 to skim, which is exactly when the real one gets missed.
 
-Check how many times the mechanism this plan touches has already been changed —
-`git log --oneline -- <path>` and `.harness/roadmap.md` if present. A third or
-later patch to the same mechanism is evidence the design is wrong, not that
-this patch is wrong; surface the count in the Verdict rather than waiting for
-someone to ask the architect.
+Stage 0 already counted how many times the mechanism this plan touches has been
+rewritten. **Carry that count into the Verdict**, and carry what it means with
+it: a third or later patch to the same mechanism is evidence the design is wrong,
+not that this patch is wrong. A number with no rule attached changes nothing.
 
-## Stage 2b — Have the plan argued against
-
-Once the plan is written and **before** presenting it, if it spans more than
-about three files, launch `harness:plan-challenger` on it. Below that, skip —
-ceremony on a small request is how a process gets bypassed.
-
-It reads the plan, not the code, and it is briefed to argue for less: what to
-cut, what the smaller version is, and whether the verification would actually
-fail on a broken implementation. Give it the contract's path and the request.
-
-This is the one place nothing else covers. Everything downstream checks whether
-the code matches the plan; **nothing else asks whether the plan was right**, and
-by then it is the most expensive thing to have got wrong.
-
-Act on it before presenting. If you cut something, cut it. If you disagree, keep
-it and say why in one line — the user should see that the argument happened and
-how it was settled, not a plan that quietly survived it.
+Before you present it, read the plan back against what the challenger said and
+check that nothing quietly went missing. An objection acted on is cut; an
+objection overruled is one line in Disagreement. An objection that appears in
+neither was not answered — it was forgotten, and it is about to be built.
 
 ## Stage 3 — Get approval, and actually stop
 
 Present the goal, the user flow, the data flow, the verdict and the budget —
-and **read out "What you did not say"**. That section is the one the user cannot
-supply themselves, because it is a list of things they did not know to mention.
-Two lines of it are worth more than a paragraph restating what they asked for.
+and **read out Disagreement**. That section is the one the user cannot supply
+themselves: it holds what they did not know to mention, what you decided on their
+behalf, and what the challenger objected to. Two lines of it are worth more than
+a paragraph restating what they already asked for.
 
 Then `AskUserQuestion` with real choices, your recommendation first:
 

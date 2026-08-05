@@ -49,7 +49,25 @@ def plugin_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-OFF_MARKER = data_dir() / "off"
+def off_marker() -> Path:
+    """The kill switch's marker file.
+
+    A function, not a module constant, and that is not style. As a constant it
+    was bound at *import* time, so it kept whatever `CLAUDE_PLUGIN_DATA` said
+    when the module was first imported and ignored every later change — while
+    `data_dir()` beside it re-read the environment on every call. The two then
+    disagreed, silently, and both directions are bad:
+
+    - In the suite, pytest imports `state` at collection and the fixtures set
+      `CLAUDE_PLUGIN_DATA` afterwards, so this resolved to the developer's real
+      `~/.claude` marker. Anyone who had ever run `switch.py off` got a suite
+      where `gates_disabled()` was True and every gate assertion passed by
+      checking nothing — the exact failure `conftest.data_dir` clears
+      `HARNESS_OFF` to prevent, left open for the file that means the same thing.
+    - In the other direction, `switch.py off` under test wrote its marker into
+      the user's live data directory and switched their real harness off.
+    """
+    return data_dir() / "off"
 
 
 def _sub(name: str) -> Path:
@@ -82,7 +100,7 @@ def env_disabled() -> bool:
 
 
 def gates_disabled() -> bool:
-    return env_disabled() or OFF_MARKER.exists()
+    return env_disabled() or off_marker().exists()
 
 
 # ------------------------------------------------------------- hook plumbing

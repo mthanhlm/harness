@@ -97,6 +97,30 @@
       ]
     },
     {
+      "name": "lens-retrieval",
+      "domain": "retrieval and memory",
+      "paths": [
+        "**/retrieval/**",
+        "**/retriever*/**",
+        "**/rag/**",
+        "**/*rag*.py",
+        "**/*rag*.ts",
+        "**/embeddings/**",
+        "**/*embedding*.py",
+        "**/*embedding*.ts",
+        "**/*retriev*.py",
+        "**/*retriev*.ts",
+        "**/*chunk*.py",
+        "**/*chunk*.ts",
+        "**/vectorstore*/**",
+        "**/*vector_store*",
+        "**/*vectorstore*",
+        "**/memory/**",
+        "**/*memory*.py",
+        "**/*memory*.ts"
+      ]
+    },
+    {
       "name": "lens-infra",
       "domain": "config, CI and shell",
       "paths": [
@@ -109,25 +133,75 @@
         "**/*.tf",
         "Makefile"
       ]
+    },
+    {
+      "name": "lens-requirements",
+      "domain": "requirements and product thinking",
+      "paths": [
+        "**/*spec*.md",
+        "**/*requirements*.md",
+        "**/PRD*.md",
+        "**/*rfc*.md",
+        "**/*design*.md"
+      ]
+    },
+    {
+      "name": "lens-contracts",
+      "domain": "API contracts, versioning and migration",
+      "paths": [
+        "**/migrations/**",
+        "**/*.proto",
+        "**/openapi*.yaml",
+        "**/openapi*.json",
+        "**/*.graphql",
+        "**/*.d.ts",
+        "CHANGELOG.md",
+        "**/drizzle/**",
+        "**/alembic/**"
+      ]
+    },
+    {
+      "name": "lens-resilience",
+      "domain": "failure modes, resilience and operations",
+      "paths": [
+        "**/*retry*",
+        "**/*circuit*",
+        "**/queue*/**",
+        "**/*queue*.py",
+        "**/*queue*.ts",
+        "**/workers/**",
+        "**/jobs/**",
+        "**/*health*",
+        "**/*celery*"
+      ]
+    },
+    {
+      "name": "lens-evaluation",
+      "domain": "evaluation and observability",
+      "paths": [
+        "**/evals/**",
+        "**/*eval*.py",
+        "**/*eval*.ts",
+        "**/*bench*.py",
+        "**/telemetry/**",
+        "**/*metrics*",
+        "**/*tracing*",
+        "**/*otel*",
+        "**/*logger*"
+      ]
     }
   ],
   "roles": [
     {
-      "name": "architect",
+      "name": "challenger",
       "phase": "before",
-      "when": "The change lands in unfamiliar or messy code, keeps fighting the existing design, or the question is whether to build it at all.",
+      "when": "Before a plan is drafted, on anything triage did not route to A. Answers what the user story really is, what in the code contradicts the request, what past decision it reverses, whether the capability already exists, and whether to build it at all.",
       "always": false
     },
     {
-      "name": "reuse-auditor",
+      "name": "designer",
       "phase": "before",
-      "when": "Any new function, component, endpoint, table or utility is about to be written.",
-      "always": true
-    },
-    {
-      "name": "plan-challenger",
-      "phase": "before",
-      "when": "A plan has been drafted and not yet approved, and it spans more than about three files. Skipped below that: ceremony on a small request is how a process gets bypassed.",
+      "when": "Route C only, after the challenger. Run twice in one message under opposed framings \u2014 smallest change that works, and the structure this actually needs. Neither sees the other; where the two designs diverge is what the user decides.",
       "always": false
     },
     {

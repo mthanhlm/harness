@@ -76,6 +76,24 @@ def ensure(root: Path) -> list[str]:
     return missing
 
 
+def excluded(root: Path, entry: str) -> bool:
+    """Whether this clone is genuinely excluding `entry` right now.
+
+    `ensure` returns what it *added*, and an empty list means either "already
+    there" or "could not write" — so a caller that wants to tell the user
+    whether the thing is handled cannot get the answer from it. This reads the
+    file and says.
+    """
+    path = _exclude_file(root)
+    if path is None or not path.is_file():
+        return False
+    try:
+        present = {line.strip() for line in path.read_text(encoding="utf-8").splitlines()}
+    except OSError:
+        return False
+    return entry in present or entry.rstrip("/") in present
+
+
 def main() -> int:
     from state import repo_root
 

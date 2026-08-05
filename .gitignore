@@ -2,5 +2,9 @@ CLAUDE.md
 evals/results/
 __pycache__/
 *.pyc
+.pytest_cache/
 .DS_Store
 .codegraph/
+# This repo's own session memory. It records real decisions from real sessions,
+# and the repo is public — it is local state, not a deliverable.
+.harness/
