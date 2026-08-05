@@ -460,6 +460,16 @@ into.
 If the review found nothing, say so plainly. Sound work reviewing clean is a
 result.
 
+**"Found nothing" and "did not report" are different results, and only one of
+them is good news.** The review skill names any role whose findings never
+arrived; carry that sentence through to here verbatim rather than collapsing it
+into the clean line. A review with two roles silent is not a review that passed —
+it is a review with a hole in it, and this stage is the last place the user can
+be told. Report it as its own line, by role name, with what it means:
+
+> reviewer-correctness did not report, on two attempts. Nothing in this covers
+> correctness — the verification command passing is not a substitute.
+
 The roadmap writes itself when the session ends — `session_end.py` derives the
 entry from the contract's Verdict, Disagreement and "Explicitly NOT changing"
 sections. That is worth knowing while you write the plan rather than after: those

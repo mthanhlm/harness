@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "harness",
   "displayName": "Harness",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Blocks on facts, advises on taste. One entry point that plans, builds and reviews, with fast checks on every edit and a crew of domain specialists assembled per job.",
   "author": {
     "name": "mthanhlm",

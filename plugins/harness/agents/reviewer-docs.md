@@ -3,7 +3,6 @@ name: reviewer-docs
 description: Finds documentation and comments that a change has made wrong — stale READMEs, outdated docstrings, examples that no longer run, and comments that restate or contradict the code. Use after any change to public behaviour, setup steps, configuration or function signatures.
 model: sonnet
 effort: medium
-maxTurns: 20
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -44,7 +43,13 @@ open the ones that apply.** Apply what you read; do not restate it.
 
 ```bash
 git diff HEAD
+git status --short          # `??` is a new file, absent from the diff above
 ```
+
+New files are invisible to `git diff HEAD` — git has nothing to diff them
+against. Read every `??` path. A new file is the one most likely to be
+undocumented and the one most likely to carry a header comment describing
+something it does not do.
 
     a signature changed          → its own docstring, and every example calling it
     something was renamed        → grep the OLD name across docs, comments,

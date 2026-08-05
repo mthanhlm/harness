@@ -235,6 +235,12 @@
       "always": false
     },
     {
+      "name": "reviewer-coherence",
+      "phase": "after",
+      "when": "The change adds a mechanism, a migration, a config field, a generated or exported file, or a second home for something that already exists. Asks whether the finished change agrees with itself — a concept now owned twice, a guard keyed on a condition that cannot occur, a copy that will drift from its source, an optional argument whose failure mode points the wrong way. Never whether it should have been built; that was settled before the plan.",
+      "always": false
+    },
+    {
       "name": "reviewer-docs",
       "phase": "after",
       "when": "A signature, name, default, setup step, command or public behaviour changed.",

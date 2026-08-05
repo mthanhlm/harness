@@ -105,6 +105,7 @@ Opus judgement agent billed both, $0.075 and $0.146, in one turn.
 | `reviewer-correctness` | opus/xhigh | Must imagine inputs nobody wrote down |
 | `reviewer-security` | opus/high | Adversarial thinking, but narrow and conditional |
 | `reviewer-tests` | opus/high | "Would this fail if the code were wrong?" is simulation |
+| `reviewer-coherence` | opus/high | Holds the whole change at once to see a seam no single line shows |
 | `refuter` | opus/high | Last gate. A weak one throws away good findings |
 | `reviewer-bloat` | sonnet/high | Duplication and one-caller abstractions are patterns |
 | `reviewer-perf` | sonnet/high | N+1s, missing indexes and blocking calls are structural |

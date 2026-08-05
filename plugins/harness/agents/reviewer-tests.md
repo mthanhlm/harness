@@ -3,7 +3,6 @@ name: reviewer-tests
 description: Judges whether tests would actually fail if the code were wrong, and whether the cases that matter are covered. Use after writing or changing tests, and whenever a change arrives with tests that pass on the first run.
 model: opus
 effort: high
-maxTurns: 30
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -39,7 +38,12 @@ like in that domain — open the ones that apply.
 
 ```bash
 git diff HEAD
+git status --short          # `??` is a new file, absent from the diff above
 ```
+
+A test file added in this change does not appear in `git diff HEAD` at all — git
+has no old version to compare it to. Read every `??` path before you decide what
+the change pins, or a whole new suite reads as "no test did".
 
     behaviour changed AND tests changed   → Step 2, on those tests
     behaviour changed and NO test did     → Step 4. This is the harder case

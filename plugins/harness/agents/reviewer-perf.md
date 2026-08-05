@@ -3,7 +3,6 @@ name: reviewer-perf
 description: Finds work that will not scale — repeated queries, accidental quadratic loops, unbounded memory, missing indexes and blocking calls on hot paths. Use on changes touching loops over user data, database access, rendering lists or request handling.
 model: sonnet
 effort: high
-maxTurns: 25
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -43,7 +42,10 @@ open the ones that apply.** Apply what you read; do not restate it.
 
 ## Step 1 — Find what varies with data the user controls
 
-Before looking for patterns, establish which collections here can grow.
+Before looking for patterns, establish which collections here can grow — across
+the whole change, which includes the files no diff shows. `git status --short`
+marks untracked files `??`; read them, or a newly added hot path is invisible to
+you.
 
     a table, a user's items, a search result, an
     upload, a page of records, a request payload  → unbounded. In scope

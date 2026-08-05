@@ -209,9 +209,19 @@ The same prompt does not produce the same output twice.
 - **Decide what happens on a malformed response before shipping.** It will
   happen. Retrying with the validation error included is usually right; crashing
   is acceptable; silently taking the wrong branch is not.
-- **Every loop needs a turn cap and a cost ceiling.** An agent loop with neither
-  is an unbounded bill and a stuck process. Agents do get stuck repeating one
-  tool call, and the cap is what ends it.
+- **Every loop needs its cost bounded — and you have to check the bound actually
+  binds.** Agents do get stuck repeating one tool call, and something has to end
+  that. A turn cap is the obvious instrument, and the trap is assuming it works
+  because you configured it: measured in this plugin, agents ran 55, 70 and 84
+  turns against caps of 25 and 30 and finished normally. The cap was declared,
+  inert, and believed in for a fortnight. Assert the bound by observation — run
+  something past it on purpose and see what comes back — before you rely on it.
+- **A bound whose overrun is invisible is worse than none.** Decide what the
+  caller receives when a run is cut short. A loop that returns its *opening* line
+  instead of its findings has spent the full price and delivered nothing, and it
+  reads downstream as a clean result rather than a failure. Whatever consumes the
+  output needs a way to tell "finished with nothing to say" from "stopped before
+  it said anything".
 - **One run proves nothing** at temperature above zero.
 
 ## Prompt injection
@@ -278,7 +288,7 @@ models; tasks outside it run badly on everything.
 4. Does every tool description say *when* to use it, not just what it does?
 5. Are there two tools that overlap?
 6. Do error messages tell the model what to do differently?
-7. Is there a turn cap and a cost ceiling on every loop?
+7. Is every loop's cost bounded, and does the bound leave the work readable when it fires?
 8. Is external content tagged as data before it enters the context?
 9. Is anything countable being estimated by the model instead of counted?
 10. Does any number reach the model without a rule for acting on it?

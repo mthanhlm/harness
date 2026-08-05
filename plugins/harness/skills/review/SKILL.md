@@ -57,8 +57,16 @@ ship inside a plugin, so the Task tool addresses them as `harness:reviewer-perf`
 The bare name fails with an unknown-agent error that reads like you did not
 bother to run it, so the report gives you both and you want the second.
 
-The always-on roles run. For each conditional one, judge it against what
-actually changed rather than running everything:
+**Every role the report marks `always: true` gets launched.** Not most of them,
+and not the ones that look relevant — a role is marked always-on because the
+judgement about when it applies was already made. In KD-547 `reviewer-bloat` was
+simply not launched in the final round, nothing noticed, and the byte-comparison
+it had run in the previous round was the check that would have caught a corrupted
+file. If you skip one anyway, name it and the reason in the crew sentence below,
+so the omission is something the user can see and overrule.
+
+For each conditional one, judge it against what actually changed rather than
+running everything:
 
 - `reviewer-security` — only if the change touches input, auth, queries, paths,
   external calls or config.
@@ -67,14 +75,26 @@ actually changed rather than running everything:
 - `reviewer-tests` — if tests changed, or if behaviour changed without them.
 - `reviewer-docs` — if a signature, name, default, command or public behaviour
   changed.
+- `reviewer-coherence` — if the change adds a mechanism, a migration, a config
+  field, a generated or exported file, or a second home for something that
+  already exists.
 
 Running every role on every change is how a review becomes noise, and noise
 trains people to skim. A role with nothing to look at will produce something
 anyway, because that is what it was asked to do.
 
-Whether the design was right at all is not a review question. It was settled
-before the code existed, by `harness:challenger` at the top of `harness:plan`.
-Asked here, it can only recommend rewriting work that is already done.
+**Whether the design was right at all is still not a review question.** It was
+settled before the code existed, by `harness:challenger` at the top of
+`harness:plan`, and asked here it can only recommend rewriting work that is
+already done.
+
+`reviewer-coherence` is not that question and its brief holds the line
+explicitly. "This should not have been built" is out of bounds for it. "This is
+now built in two places and they already disagree" is exactly what it is for, and
+nothing else was looking: a change can be correct line by line and still leave a
+guard waiting on a condition that cannot occur, or a file claiming to be a copy
+of something it no longer matches. Those defects have no single line to point at,
+which is why the line-by-line roles walk past them.
 
 **Say the crew out loud before running it** — one or two lines, which roles and
 why, which you skipped. This is where the user can say "you have missed the
@@ -93,6 +113,68 @@ Launch them in a **single message** so they run concurrently, and **wait for the
 there is no review to report without their findings. Give each the same
 brief: the diff range, the contract if one exists, and the focus argument if the
 user gave one.
+
+## 4b. Check that every reviewer actually reported
+
+**A reviewer's result can arrive without the report in it.** Not as an error —
+as a short, plausible-looking string. What comes back is the agent's *opening*
+line, followed by an `agentId` handle and a usage block:
+
+    I'll start by reading the domain knowledge and the diff.
+    agentId: a952bc936b5a207ce (use SendMessage with to: ...)
+    <usage>subagent_tokens: 110506  tool_uses: 31  duration_ms: 220031</usage>
+
+That is 256 bytes and it is not a report. The findings were written — in KD-547
+four of eighteen launches came back this way, and the reports were recovered
+afterwards from the agents' own transcripts, naming real defects in the code
+under review. The tokens in that usage block were spent. Only the answer was
+lost.
+
+**Judge it on what it says, not on how long it is.** Length looks like the
+obvious test and it does not work: a genuine "nothing to report" written to the
+template in these briefs measures 350 to 400 bytes, and the dropped results
+observed so far run from 47 to 256 — the two ranges very nearly touch, so any
+threshold you pick condemns real reports or waves stubs through. What separates
+them is not size. It is that a report answers the review question, and a dropped
+result talks about the work instead of doing it — future tense, no file named, no
+finding and no check. *"I'll start by reading the diff"*, or a note-to-self about
+what to look at next.
+
+So before you refute anything, read each result you got back:
+
+    it answers the question — findings, or
+    "nothing found" plus what was checked   → a report, however short. Carry on
+    it says what the agent was about to do,
+    or breaks off mid-reasoning, and names
+    no finding and no check                 → it did not report. Re-launch that
+                                              reviewer once, same brief
+    it names a check or a finding and then
+    breaks off — no closing list of what
+    was checked, no "nothing found"         → a partial report. Re-launch it
+                                              once, and until the second result
+                                              arrives treat the role as having
+                                              covered nothing
+    the second result answers no better     → stop. That role **did not report**,
+                                              and step 6 says exactly that —
+                                              never as clean
+
+**The middle row is the one that will catch you out.** Truncation does not
+politely land on the opening sentence — it lands wherever the run stopped, which
+is usually after the agent has named a file or two. A result that opens *"Checked
+the three callers of `formatRange` — all pass the new signature. Now let me look
+at the DST boundary"* has named a check and found nothing yet, and the first row
+will happily take it as a clean report. It is not one: it is the same failure a
+paragraph later. Every brief here ends a no-findings report with the list of what
+it checked, so a report that stops mid-thought is missing its own ending.
+
+Re-launch **once**, not repeatedly. A second loss is information about the run,
+not something to keep paying for.
+
+Two things this is not. It is not a judgement about quality — "No perf findings.
+Checked: the two loops in the diff, both over a fixed status list" is a complete
+answer, and re-running it wastes a full reviewer to be told the same thing twice.
+And it is not licence to summarise a result you never received: **you may never
+infer what a missing reviewer would have said.**
 
 ## 5. Refute every finding before it reaches the user
 
@@ -147,6 +229,18 @@ scenario that produces it.
 Then, in one line, what came back clean. "Correctness, perf and security found
 nothing" is real information — without it, a short report is indistinguishable
 from a lazy one.
+
+**A role may only appear in that line if you read its findings.** A reviewer that
+did not report is not a reviewer that found nothing, and it is never folded into
+the clean list — it gets its own sentence, by name:
+
+> reviewer-correctness did not report, on two attempts. Nothing here covers
+> correctness; run `/harness:review` again before treating this as reviewed.
+
+Say it even when it makes the review look incomplete, because it *is* incomplete
+and that is the one fact the user cannot recover on their own. The failure this
+prevents is specific and it has happened: a dropped report, described as a clean
+one, over a change that had three defects in it.
 
 If everything was refuted, say exactly that. Sound work reviewing clean is a
 result, and manufacturing a finding to look diligent wastes a turn and costs

@@ -3,7 +3,6 @@ name: challenger
 description: Argues with the request itself, before any plan exists — what the user story really is, what in the codebase contradicts it, what past decision it reverses, and whether it should be built at all. Use at the top of planning on anything that is not a mechanical fix.
 model: opus
 effort: xhigh
-maxTurns: 40
 tools: Read, Grep, Glob, Bash
 ---
 

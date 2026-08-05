@@ -3,7 +3,6 @@ name: reviewer-correctness
 description: Reviews a diff for defects that produce wrong behaviour — logic errors, unhandled cases, broken callers, race conditions and bad state transitions. Use after implementing a change and before treating it as done.
 model: opus
 effort: xhigh
-maxTurns: 30
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -45,7 +44,17 @@ open the ones that apply.** Apply what you read; do not restate it.
 
 ```bash
 git diff HEAD
+git status --short          # and then read every `??` in full — see below
 ```
+
+**A new file is not in `git diff HEAD`.** Until something stages it, git has no
+old version to diff against, so the whole file is invisible to the first command
+and the change looks smaller than it is. `git status --short` marks those `??`,
+and you `Read` them directly — all of them, including the large ones. A generated
+or exported file is exactly where this bites: it is the least-read code in the
+change and the most likely to have been assembled by a script nobody checked.
+When such a file claims to be a copy of something else, verify that claim against
+the original rather than accepting the header comment.
 
 `git diff` shows what changed but not what depended on it. **The defects that
 matter most are usually outside the diff.**

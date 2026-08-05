@@ -3,7 +3,6 @@ name: reviewer-bloat
 description: Finds code that does not earn its place — duplicated capability, speculative abstraction, unnecessary options, dead paths and comments that restate the code. Use after implementing a change, and whenever a diff is larger than the task warranted.
 model: sonnet
 effort: high
-maxTurns: 25
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -47,6 +46,14 @@ open the ones that apply.** Apply what you read; do not restate it.
 
 The most expensive finding is duplicated capability, and it can only be found by
 looking outside the diff.
+
+Start by seeing the whole change. `git status --short` marks untracked files
+`??`, and none of them appear in any diff — git has no old version to compare
+them against. **Read every one, including the large ones.** A newly added file is
+where duplicated capability is most likely to be hiding, precisely because it is
+the part nobody has read yet; and when such a file claims to be a copy or an
+export of something else, check that claim against the original instead of
+believing its header.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"

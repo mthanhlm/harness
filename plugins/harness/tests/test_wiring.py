@@ -410,17 +410,55 @@ def test_the_hook_events_are_the_ones_intended():
 
 
 @pytest.mark.parametrize("path", AGENT_FILES, ids=lambda p: p.stem)
-def test_every_agent_caps_its_own_loop(path):
-    """An agent loop with no turn cap is an unbounded bill and a stuck process.
+def test_no_agent_caps_its_own_loop(path):
+    """`maxTurns` was added to every agent in commit f346998 (0.7.1 -> 0.9.0,
+    2026-08-05) on the reasoning that an uncapped loop is an unbounded bill and
+    a stuck process. It is not being re-added, and this test exists so a future
+    session does not do so on that same general principle without seeing what
+    happened when it shipped.
 
-    Agents do get stuck repeating one tool call, and without `maxTurns` the only
-    thing that ends it is the session. The plugin's own llm-agents lens states
-    this as a rule; it went a long time without applying it to itself.
+    **Removing it is a preference, not a proven fix, and the docstring that first
+    shipped here claimed otherwise.** Recording what was actually measured,
+    because the false version was more persuasive than the truth.
+
+    The trigger was session KD-547, the same day the cap landed: four of eighteen
+    subagent launches returned 255-256 bytes to the parent — an opening sentence,
+    an `agentId` handle and a usage block — instead of the report the agent had
+    written. Those reports are still in the subagents' own transcripts and two of
+    them name real defects the parent never saw. The first account of this test
+    said every stub had exceeded its cap and every under-cap run delivered, and
+    inferred cause from it.
+
+    That inference was wrong twice over. It compared `tool_uses` from the usage
+    block against `maxTurns`, which counts assistant turns, not tool calls — two
+    different numbers. Counting turns directly in the subagent transcripts kills
+    it: the KD-547 stubs ran 55, 56 and 70 turns against caps of 30, 25 and 30,
+    and a run in the session that reviewed this change went 84 turns against a
+    cap of 30 and delivered an 11,713-character report. **An agent demonstrably
+    runs well past `maxTurns` and finishes normally, so whatever ends these runs,
+    the cap is not it.**
+
+    The transcripts also show two different failures wearing one face. In KD-547
+    the agents wrote full reports and the parent received a stub — a transit
+    loss, recoverable from disk. In the later session the agents' own last
+    message *is* the stub: they stopped without ever writing a report, and there
+    is nothing to recover. Only the second kind is worth re-launching, and the
+    delivery check in `skills/review/SKILL.md` step 4b handles both because it
+    keys on the result being absent rather than on any theory of why.
+
+    So this assertion encodes a decision — the user asked for the caps gone, and
+    the roadmap entry r14 measure of all agents at 6.3% of lifetime spend makes
+    that cheap — and not a mechanism. Do not cite it as evidence that capping a
+    loop causes lost reports. If a future session wants a bound, the honest
+    reasons to still hesitate are that the caps never bound anything measurable
+    here, and that a bound whose overrun is invisible is worse than none.
     """
     turns = frontmatter(path).get("maxTurns")
 
-    assert turns, f"{path.stem} has no maxTurns"
-    assert 1 <= int(turns) <= 100, f"{path.stem} caps at {turns}, which is not a cap"
+    assert turns is None, (
+        f"{path.stem} sets maxTurns={turns}; the caps were removed by decision — "
+        "read this test's docstring before re-adding one"
+    )
 
 
 def test_the_manifest_passes_the_official_validator():

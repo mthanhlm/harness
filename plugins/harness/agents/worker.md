@@ -3,7 +3,6 @@ name: worker
 description: Builds one self-contained slice of an approved plan. Use when a plan's file list splits into slices that do not share files, so they can be built at the same time. Not for judgement calls — those belong to whoever approved the plan.
 model: sonnet
 effort: medium
-maxTurns: 60
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 

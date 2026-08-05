@@ -3,7 +3,6 @@ name: reviewer-security
 description: Reviews a diff for exploitable weaknesses — injection, broken authorisation, exposed secrets, unsafe deserialisation and leaky errors. Use on changes touching authentication, user input, database queries, file paths, external calls or configuration.
 model: opus
 effort: high
-maxTurns: 30
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -43,6 +42,10 @@ Your work is the tracing. Data enters somewhere and is used somewhere; you follo
 it between the two, through this specific code.
 
 ## Step 1 — Find every entry point this diff touched or reached
+
+An entry point added in a brand-new file is in no diff at all — git has nothing
+to compare it against. `git status --short` marks those `??`; read every one
+before you conclude which surfaces this change exposes.
 
     a handler, route or resolver     → its parameters, body, query and headers
     a file or upload path            → the name AND the contents

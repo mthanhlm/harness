@@ -3,7 +3,6 @@ name: designer
 description: Designs one complete answer to a request — goal, user flow, data flow, scope, verification and a falsifiable prediction. Run twice in parallel under opposed framings so the divergence between the two designs becomes the decision. Not for reviewing a design that already exists.
 model: opus
 effort: xhigh
-maxTurns: 40
 tools: Read, Grep, Glob, Bash
 ---
 
