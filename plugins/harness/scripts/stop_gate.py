@@ -418,8 +418,21 @@ def main() -> int:
             notes += [f"{r.label} did not run ({r.skipped}) — NOT verified" for r in skipped]
             if pending:
                 notes.append(pending)
-            if notes:
-                emit({"systemMessage": f"harness: {'; '.join(notes)} (not blocking).", "suppressOutput": True})
+            # What passed is said first and always, not only when there is
+            # nothing else to say. The first version put it in an `else` after
+            # `if notes:` — and `pending` is one of those notes, so a green turn
+            # during an unapproved plan reported the plan and stayed silent about
+            # the suite. That is the common state, not the edge: three of six
+            # contracts in one day sat pending. `systemMessage` is free — it
+            # never touches the model's context — so there is no reason to trade
+            # one fact away for another.
+            parts = []
+            if passed:
+                parts.append(f"{', '.join(r.label for r in passed)} passed")
+            parts += notes
+            if parts:
+                tail = " (not blocking)." if notes else "."
+                emit({"systemMessage": f"harness: {'; '.join(parts)}{tail}", "suppressOutput": True})
             return 0
 
         result = blocking[0]

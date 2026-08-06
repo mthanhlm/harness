@@ -155,6 +155,22 @@ def test_no_brief_recommends_a_skill_or_agent_that_was_deleted(path):
     )
 
 
+def test_every_script_a_brief_names_actually_exists():
+    """A brief that sends an agent to a script is a promise about the disk, not
+    just about the prose.
+
+    `challenger.md` used to send its agent to `roadmap.py show`; the wiring test
+    above only checked that the *string* was present, so a rename that left the
+    old name behind would have passed silently — the brief would read fine and
+    the agent would run a command that fails. Checking the file exists is what
+    catches that a rename actually rewired the pointer, not just the label.
+    """
+    for path in AGENT_FILES + SKILL_FILES:
+        for script in re.findall(r'scripts/([a-zA-Z0-9_]+\.py)"', path.read_text(encoding="utf-8")):
+            target = PLUGIN / "scripts" / script
+            assert target.exists(), f"{path.name} sends the agent to scripts/{script}, which does not exist"
+
+
 def test_no_brief_tells_an_agent_that_lens_selection_is_not_its_job():
     """The briefs and the gate below them have to describe the same design.
 

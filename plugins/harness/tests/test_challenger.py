@@ -134,6 +134,7 @@ def test_the_challenger_is_told_to_go_and_find_evidence_rather_than_re_read():
     """Ch10's finding, and the reason this agent is not just a second opinion: a
     reviewer that consumes only what the proposer already had adds nothing, and
     measured on GPT-4, self-correction without external feedback *lowered*
-    accuracy. The brief has to send it to the git log, the roadmap and the code."""
-    for probe in ("git log", "roadmap.py", "codegraph"):
+    accuracy. The brief has to send it to the git log, the recorded lessons and
+    the code."""
+    for probe in ("git log", "lessons.py", "codegraph"):
         assert probe in CHALLENGER, f"the challenger is never sent to {probe}"

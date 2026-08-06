@@ -224,45 +224,90 @@ their own. That is the right trade for a tool's scratch directories and the wron
 one for anything the project genuinely needs ignored — which is why it only ever
 writes those two entries.
 
-## It remembers what this project decided
+## It remembers what stays true
 
-`.harness/roadmap.md`, in your repo, excluded locally. `/harness:plan` reads it
-before planning and appends to it after — **decisions and deferred work only**,
-capped, newest first.
+`.harness/lessons.md`, in your repo, excluded locally. `/harness:plan` and
+`harness:challenger` read it before deciding anything, and a plan's contract can
+carry a `## Lessons` section that a hook harvests into the file when the session
+ends.
 
-Without it every session starts from nothing: the same ground gets re-covered,
-and a real problem found and reported in one session is gone by the next. It is a
-file rather than a feature on purpose, and you can edit or delete it freely.
+Without it every session starts from nothing: the same mistake gets made twice,
+and a correction earned the hard way in one session is gone by the next. It is a
+file rather than a feature on purpose, and you can edit it freely.
 
-What it is not is a session log. A narrative of what happened rots into a wall
-nobody reads, and then it is worth nothing to the session that needed it. The
-test for an entry is whether it would change what someone does next.
+**The test for a lesson is whether it will still be true in three months.** A
+status report about work currently in flight does not qualify — "finished the
+retry queue this session" is not a lesson, it is the plan's own Verdict restated.
+"The retry queue silently drops messages over 256KB" is one, because it stays
+true regardless of what else changes around it.
 
-**It records what became of a decision, not just what was decided.** Each entry
-carries an id, and an outcome derived at session end by comparing what actually
-changed against the Budget the plan predicted:
-
-| Outcome | Means |
-|---|---|
-| `held` | the session stayed inside its own forecast |
-| `reworked` | it ran to twice the predicted files or lines — the plan was redesigned while being built |
-| `open` | the plan wrote no Budget, so nothing was measured |
-
-A plan that reverses an earlier decision names it as `Supersedes: r12`. The old
-entry leaves the index, stays in the file, and points at its replacement — so a
-retired rule stops being cited as current, which is the specific way an
-append-only memory goes wrong.
+A lesson that turns out wrong is not deleted — deleting it would let the same
+mistake get made again with no trace it was ever caught. `lessons.py revise <id>`
+records the correction beside the original entry instead, so the wrong one stays
+visible and a plan proposing the same shape again has something to trip over.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/roadmap.py" show            # index only, ~40 tokens per entry
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/roadmap.py" show r14        # one entry
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/roadmap.py" touching src/auth/session.ts
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/lessons.py" show
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/lessons.py" add
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/lessons.py" revise <id>
 ```
 
-`show` prints one line per decision still in force rather than the whole file.
-On a real 36KB roadmap that is 458 tokens instead of about 9,000, and an entry
-marked `reworked` is the strongest evidence there is that a shape was already
-tried here and did not hold.
+## The closing report is a link, not a wall of chat
+
+A run used to end with the contract, the scope list and everything else typed
+straight into the chat transcript — "a pile of text I can't follow," in the
+words of the person who has to read it every time. `report_page.py write
+[session-id]` builds a self-contained HTML page rendering the contract, the
+recorded lessons and the session's state, and prints that page's absolute path:
+
+```bash
+CLAUDE_PLUGIN_DATA="$CLAUDE_PLUGIN_DATA" python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_page.py" write
+```
+
+The environment variable is not decoration. A shell does not inherit
+`CLAUDE_PLUGIN_DATA` the way a hook is given it, so without it the script
+resolves a different data directory than every hook, finds no contract there,
+and prints the path of a page it just wrote with nothing on it.
+
+`/harness:plan` and `/harness:review` publish that path with the Artifact tool
+and hand you the resulting link, and keep the chat message itself to a short
+brief — what changed, what was verified, and anything you have to decide.
+Writing to the same path again later in the same session updates that artifact
+rather than minting a new one, so a link you already opened keeps working
+instead of going stale.
+
+### The same thing, always on screen
+
+A link handed over in a message has scrolled away by the time you want it. The
+status line is the only surface that does not, so `report_page.py link` prints
+one line built for it — the plan's verdict, its status, and a `file://` URL to
+the page once one has been written. Claude Code hands a status-line command its context as JSON on stdin, so that is
+where the session id comes from — but **pass it as an argument** if your script
+does anything else with that JSON:
+
+```bash
+input=$(cat)
+session=$(printf '%s' "$input" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("session_id",""))')
+CLAUDE_PLUGIN_DATA="$CLAUDE_PLUGIN_DATA" python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_page.py" link "$session"
+```
+
+Reading stdin consumes it. A script that renders anything of its own about the
+session has already done that `cat`, and by the time the harness line runs stdin
+is at EOF — so it finds no session id and prints nothing, which looks exactly
+like a session with no plan. `CLAUDE_CODE_SESSION_ID` does not cover the gap:
+that variable is exported to Bash tool calls, not to the status-line process.
+Only when the harness line is the first thing in the script can the argument be
+left off.
+
+It prints nothing at all for a session with no contract, and exits 0 whatever
+happens. Both are deliberate: a status line that announces "no contract" on
+every session that never needed one stops being read, and a traceback there
+lands in the one place on screen that redraws constantly.
+
+It does not render the page — that runs on the editor's cadence, not the turn's,
+and rebuilding an HTML file that often to show a link would cost more than the
+link is worth. Before the first page is written the line still carries the
+verdict and the status, which is the part that changes.
 
 ## Something argues with the request before a plan exists
 
@@ -271,8 +316,8 @@ about the plan's size. By then there was an author attached to it, and whether
 the thing was worth building at all had been settled by nobody.
 
 `plan` now starts by counting what can be counted — how many commits have
-already rewritten the files you named, what the roadmap recorded about them,
-whether the repo can test itself — and routes on it:
+already rewritten the files you named, whether the repo can test itself — and
+routes on it:
 
 | Route | When | What runs |
 |---|---|---|

@@ -1,8 +1,8 @@
 """What a session is told after its context was compacted away.
 
 A compaction summarises the transcript and throws the rest away. The gates do
-not care — the contract, the shards and the roadmap are all on disk, and they go
-on enforcing whatever was agreed. The *model* cares: it comes back knowing it is
+not care — the contract and the shards are both on disk, and they go on
+enforcing whatever was agreed. The *model* cares: it comes back knowing it is
 mid-task and not knowing what the task was, so it re-reads files to rebuild what
 it already agreed to, which is how a context that was just compacted refills.
 
@@ -181,46 +181,47 @@ def test_a_blocking_gate_is_named_in_the_snapshot(data_dir, hook_env, tmp_path):
     assert "currently blocking on: pytest" in context
 
 
-def test_the_newest_roadmap_entry_is_named(data_dir, hook_env, tmp_path):
-    """Untested, this line can be deleted with the suite green — and it reaches
-    through two private functions in a module nothing else here imports."""
+def test_a_lesson_is_named_in_every_session_not_only_a_resumed_one(data_dir, hook_env, tmp_path):
+    """Lessons are loaded like the tool profile, not like the carry-over
+    snapshot — `startup` must see them too, since a fresh session has just as
+    much to gain from a durable lesson as a resumed one does."""
     root = repo(tmp_path)
-    write_contract("sess")
     (root / ".harness").mkdir()
-    (root / ".harness" / "roadmap.md").write_text(
-        "# Roadmap\n\n## 2026-08-03 — the newest thing decided\n\n- decided: x\n",
+    (root / ".harness" / "lessons.md").write_text(
+        "# Lessons\n\n## L1 · 2026-08-03 · the newest thing learned\n\nBody.\n",
         encoding="utf-8",
     )
 
-    context = start(hook_env, root, "compact")
+    context = start(hook_env, root, "startup")
 
-    assert "2026-08-03 — the newest thing decided" in context
+    assert "the newest thing learned" in context
 
 
-def test_a_repo_supplied_roadmap_cannot_flood_the_context(data_dir, hook_env, tmp_path):
-    """`.harness/roadmap.md` is a repository file, and a clone's belongs to whoever wrote it.
+def test_a_repo_supplied_lessons_file_cannot_flood_the_context(data_dir, hook_env, tmp_path):
+    """`.harness/lessons.md` is a repository file, and a clone's belongs to whoever wrote it.
 
     Not a trust boundary — this plugin deliberately has none, and the same repo
     can already execute code through `.harness.json`. It is a budget: every
-    other value in this block is capped, and one uncapped line put 200,000
-    characters into the context of every resume.
+    other value in this block is capped, and one uncapped entry could put
+    hundreds of thousands of characters into the context of every session.
     """
     root = repo(tmp_path)
-    write_contract("sess")
     (root / ".harness").mkdir()
-    (root / ".harness" / "roadmap.md").write_text(f"## {'A' * 200_000}\n", encoding="utf-8")
+    (root / ".harness" / "lessons.md").write_text(
+        f"# Lessons\n\n## L1 · 2026-08-03 · {'A' * 200_000}\n\nBody.\n", encoding="utf-8"
+    )
 
-    context = start(hook_env, root, "compact")
+    context = start(hook_env, root, "startup")
 
-    assert len(context) < 6000, f"one repo-supplied line must not flood the context: {len(context)}"
+    assert len(context) < 6000, f"one repo-supplied entry must not flood the context: {len(context)}"
 
 
 def test_the_excluded_list_survives_when_everything_else_is_trimmed(data_dir, hook_env, tmp_path):
     """Truncation has to have a priority, and this is it.
 
     `session_start.py`'s docstring is right that long always-on context makes the
-    important lines get ignored, so the block is capped. But the roadmap records
-    real licensing edits landing because the "NOT changing" list was mis-parsed,
+    important lines get ignored, so the block is capped. But real licensing
+    edits have already landed because the "NOT changing" list was mis-parsed,
     which makes it the single line least safe to drop. A cap that trims the
     cheapest thing first would trim exactly that.
     """
@@ -247,11 +248,12 @@ def test_the_excluded_list_survives_when_everything_else_is_trimmed(data_dir, ho
 def test_every_excluded_entry_is_carried_or_counted(data_dir, hook_env, tmp_path):
     """The list the plan is least able to afford losing must not be quietly cut.
 
-    The obvious reuse here was `session_end._not_changing`, which caps at four
-    because a roadmap entry wants four interesting deferrals in prose. Applied
-    to a scope fence it dropped six of this change's own ten exclusions — and
-    because the cap lands before the renderer can count what it lost, no "and N
-    more" tail fired either. Ten bullets in, four out, reading as all of them.
+    The obvious reuse here was the bullet parser once used for the roadmap's
+    deferred entries, which capped at four because a roadmap entry wanted four
+    interesting deferrals in prose. Applied to a scope fence it dropped six of
+    this change's own ten exclusions — and because the cap landed before the
+    renderer could count what it lost, no "and N more" tail fired either. Ten
+    bullets in, four out, reading as all of them.
     """
     excluded = "\n".join(f"- `path/to/excluded{n}.py` — because" for n in range(10))
     write_contract(
@@ -270,7 +272,8 @@ def test_every_excluded_entry_is_carried_or_counted(data_dir, hook_env, tmp_path
 
 
 def test_a_renderer_that_raises_still_leaves_the_tool_profile(data_dir, hook_env, tmp_path):
-    """The contract is hand-editable, so one day it will break the renderer.
+    """The contract is hand-editable, so one day it will break the carry-over
+    renderer.
 
     `guard()` would catch the exception and exit 0 — and take the tool profile
     with it, which every session depends on and which has nothing to do with the
@@ -280,11 +283,11 @@ def test_a_renderer_that_raises_still_leaves_the_tool_profile(data_dir, hook_env
     """
     root = repo(tmp_path)
     write_contract("sess")
-    broken = SCRIPTS / "roadmap.py"
+    broken = SCRIPTS / "contract.py"
     saved = broken.read_text(encoding="utf-8")
     broken.write_text(
-        saved.replace("def _entries(text: str) -> list[str]:",
-                      "def _entries(text: str) -> list[str]:\n    raise RuntimeError('boom')"),
+        saved.replace("def section(text: str, heading: str) -> str:",
+                      "def section(text: str, heading: str) -> str:\n    raise RuntimeError('boom')"),
         encoding="utf-8",
     )
     try:
@@ -294,6 +297,27 @@ def test_a_renderer_that_raises_still_leaves_the_tool_profile(data_dir, hook_env
 
     assert "harness active" in context
     assert "Carried over" not in context
+
+
+def test_a_lessons_renderer_that_raises_still_leaves_the_tool_profile(data_dir, hook_env, tmp_path):
+    """The same failure, on the lessons side rather than the carry-over side.
+    `.harness/lessons.md` is just as hand-editable as the contract, and it is
+    read on every session, not only a resumed one."""
+    root = repo(tmp_path)
+    broken = SCRIPTS / "lessons.py"
+    saved = broken.read_text(encoding="utf-8")
+    broken.write_text(
+        saved.replace("def entries(root: str | Path | None = None) -> list[Lesson]:",
+                      "def entries(root=None):\n    raise RuntimeError('boom')\n\n"
+                      "def _unused_entries(root: str | Path | None = None) -> list[Lesson]:"),
+        encoding="utf-8",
+    )
+    try:
+        context = start(hook_env, root, "startup")
+    finally:
+        broken.write_text(saved, encoding="utf-8")
+
+    assert "harness active" in context
 
 
 def test_a_resumed_session_gets_the_same_snapshot(data_dir, hook_env, tmp_path):

@@ -12,12 +12,12 @@ automatically.
 
 One thing more, and only when the session did not start from scratch. A
 compaction throws the transcript away and a resume never had it; the gates do
-not notice, because the contract, the worker shards and the roadmap are all on
-disk and go on enforcing whatever was agreed. The model is the part that
-forgets, and it then pays to rediscover its own plan — which is how a context
-that was just compacted refills. So on `compact`, `resume` and `clear` the few
-facts it cannot cheaply reconstruct are handed back. They are read, never
-written: nothing here persists anything.
+not notice, because the contract and the worker shards are both on disk and go
+on enforcing whatever was agreed. The model is the part that forgets, and it
+then pays to rediscover its own plan — which is how a context that was just
+compacted refills. So on `compact`, `resume` and `clear` the few facts it
+cannot cheaply reconstruct are handed back. They are read, never written:
+nothing here persists anything.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ import sys
 from pathlib import Path
 
 import contract as contract_mod
+import lessons
 import local_ignore
 import lsp
-import roadmap
 import session_end
 from detect import get_profile
 from state import (
@@ -54,6 +54,10 @@ RESUMED_SOURCES = ("compact", "resume", "clear")
 # is written against.
 MAX_LISTED = 12
 GOAL_LIMIT = 240
+# Lessons are loaded into every session, same as the tool profile, so the cap
+# is the same order of magnitude: enough for several entries, not so much that
+# the always-on block becomes the thing that gets skimmed past.
+LESSONS_LIMIT = 2000
 
 
 def _describe(profile: dict) -> str:
@@ -129,6 +133,29 @@ def _contract_line(session_id: str) -> str:
     )
 
 
+def _lessons_block(root: Path) -> str:
+    """What this project has already learned, loaded into every session.
+
+    `.harness/lessons.md` is a file in the repository, invites hand editing by
+    its own preamble, and in a clone belongs to whoever wrote the repo — so its
+    length is not this module's to assume. `lessons.render`'s own `limit` is
+    the guard: one hostile or merely huge entry must not be able to flood the
+    one block that is loaded into every session start.
+    """
+    # Asked of the data, not of the rendered sentence. This was a prefix match
+    # on `render`'s "nothing recorded yet" line, so rewording that string — a
+    # change nothing would flag — would have injected it, plus the revise hint,
+    # into every session start of every repo that has no lessons.
+    if not lessons.entries(root):
+        return ""
+    body = lessons.render(root, limit=LESSONS_LIMIT)
+    return (
+        "\n" + body + "\n"
+        "  If one of these turns out to be wrong, say so on the record rather"
+        " than just working around it: `lessons.py revise <id>`."
+    )
+
+
 def _listed(entries: list[str], label: str) -> str:
     """One bullet per entry, with an honest tail when the list is cut short.
 
@@ -146,17 +173,11 @@ def _listed(entries: list[str], label: str) -> str:
 def _excluded(text: str) -> list[str]:
     """The bullets a plan promised not to touch, one line each.
 
-    Deliberately not `session_end._not_changing`, which is the obvious reuse and
-    is wrong here. That function ends `[:MAX_DEFERRED]` with MAX_DEFERRED = 4,
-    because a roadmap entry wants the four most interesting deferrals in prose.
-    This wants every path, and taking the first four of ten silently — with no
-    tail, since the cap is applied before `_listed` can count what it lost —
-    hands back a list that reads complete and is not. That is the one failure
-    the roadmap says has already cost real licensing edits.
-
-    The two callers want different things from the same bullets, so they parse
-    differently: prose there, first lines here, because a path is the first
-    token of its bullet and the wrapped remainder is commentary.
+    Its own copy of the bullet-joining rule, not a reuse of any parser written
+    for prose: this wants every path, with `_listed` supplying the "and N
+    more" tail rather than a hard cap applied before anything can be counted.
+    A silently truncated exclusion list has already cost real licensing edits
+    landing as though they were agreed.
     """
     scope = session_end._section(text, "Scope")
     cutoff = contract_mod._NOT_CHANGING_RE.search(scope)
@@ -176,9 +197,9 @@ def _carry_over(session_id: str, root, touched: list[str], blocked: dict) -> str
     disagree with what the gates enforce — it is the same contract the scope
     fence reads and the same shards the Stop gate counts.
 
-    The section helpers come from `session_end`, which already turns a contract
-    into prose for the roadmap. Restating them here would put a second parser on
-    the same hand-editable file, and the roadmap records what that costs: a fix
+    The section helpers come from `session_end`, which already parses a
+    contract's headings to harvest its lessons. Restating them here would put a
+    second parser on the same hand-editable file, which is exactly how a fix
     lands in one copy and not the other.
     """
     agreed = contract_mod.load(session_id)
@@ -216,25 +237,15 @@ def _carry_over(session_id: str, root, touched: list[str], blocked: dict) -> str
         lines.append(_listed(edited, "In scope, already edited"))
     if remaining:
         lines.append(_listed(remaining, "In scope, not yet edited"))
-    # Never trimmed, and never folded into the two lists above. The roadmap
-    # records real licensing edits landing because this list was mis-parsed, so
-    # it is the single line least safe to drop when something has to go.
+    # Never trimmed, and never folded into the two lists above. Real licensing
+    # edits have already landed because this list was mis-parsed, so it is the
+    # single line least safe to drop when something has to go.
     if excluded:
         lines.append(_listed(excluded, "Agreed NOT to change"))
     if blocked:
         lines.append(
             f"  The end-of-turn gate is currently blocking on: {', '.join(sorted(set(blocked.values())))}."
         )
-
-    newest = roadmap._entries(roadmap.read(Path(root)))
-    if newest:
-        # Capped like everything else here. `.harness/roadmap.md` is a file in
-        # the repository, invites hand-editing by its own header, and in a clone
-        # is written by whoever wrote the repo — so its length is not this
-        # module's to assume. Normally it is `## <date> — <plan title>`.
-        heading = newest[0].splitlines()[0].lstrip("# ").strip()[:GOAL_LIMIT]
-        if heading:
-            lines.append(f"  Newest roadmap entry: {heading}")
 
     lines.append(
         "  This is what you agreed to, not a suggestion. Re-read the files you"
@@ -312,6 +323,14 @@ def main() -> int:
     save_session(session, reset=fresh)
 
     context = _describe(profile) + _contract_line(event.get("session_id", "unknown"))
+    # Lessons live in a hand-editable file, same as the contract, so it will
+    # eventually break the renderer. `guard()` would catch that and exit 0,
+    # taking the tool profile with it — every session depends on that, and it
+    # has nothing to do with lessons — so this degrades to nothing instead.
+    try:
+        context += _lessons_block(root)
+    except Exception:
+        pass
     carried = ""
     # Deliberately not gated on `fresh`. `clear` resets the counters — the user
     # asked for a clean slate — but it does not delete the contract, so the

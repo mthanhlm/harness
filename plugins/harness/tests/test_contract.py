@@ -181,7 +181,7 @@ def test_the_contract_section_parser_is_not_copied_anywhere_else():
     heading line to be exactly `## Scope`, so a qualifier emptied them. Each copy
     had fixed the bug the others still had, and every one of the three failures is
     silent — an empty scope fence certifies unagreed edits, an empty section drops
-    the roadmap entry, an empty carry unbinds the plan at compaction.
+    the lessons the session earned, an empty carry unbinds the plan at compaction.
 
     This is the check that keeps the fix from being undone by a fourth copy.
     """

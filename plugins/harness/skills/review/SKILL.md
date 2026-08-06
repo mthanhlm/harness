@@ -220,19 +220,47 @@ unverified finding reported as unverified is fine; a mutation left behind is not
 
 ## 6. Report
 
-One list, most severe first. Silently-wrong data above crashes, crashes above
-degraded behaviour, everything real above anything cosmetic.
+Two things end a review, not one long list — a short prose brief in chat, and a
+link to a page holding the findings in full. A review run on its own has no
+plan skill upstream that already set this up, so do it here regardless of
+whether a plan started this session.
 
-For each: file and line, one sentence naming the defect, and the concrete
-scenario that produces it.
+### The page
 
-Then, in one line, what came back clean. "Correctness, perf and security found
-nothing" is real information — without it, a short report is indistinguishable
-from a lazy one.
+Before writing it, sort what survived refutation into one list, most severe
+first — silently-wrong data above crashes, crashes above degraded behaviour,
+everything real above anything cosmetic. For each: file and line, one sentence
+naming the defect, and the concrete scenario that produces it. This list is
+what the page renders; it is not what goes in the chat message.
 
-**A role may only appear in that line if you read its findings.** A reviewer that
-did not report is not a reviewer that found nothing, and it is never folded into
-the clean list — it gets its own sentence, by name:
+```bash
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/report_page.py" write
+```
+
+It writes two files: the path it prints, a complete document that opens from
+`file://`, and the same body with `.fragment.html` in place of `.html`.
+
+**Publish the `.fragment.html` one** with the Artifact tool and hand the user the
+link. That tool wraps whatever it is given in its own document skeleton, so
+publishing the complete one nests a page inside a page.
+
+Publishing the same path again later in the session updates the same artifact
+rather than minting a new one, so a link the user already opened stays live
+across a second pass at the same review.
+
+### The brief
+
+A few short paragraphs, not the list itself. Say what was reviewed and the
+range, which roles ran and which were skipped and why, and what came back clean
+in one line — "correctness, perf and security found nothing" is real
+information, without it a short brief is indistinguishable from a lazy one. No
+box-drawing, no column alignment, no layout that depends on how the user's
+terminal wraps; short prose and plain bullets only.
+
+**A role may only appear in that clean line if you read its findings.** A
+reviewer that did not report is not a reviewer that found nothing, and it is
+never folded into the clean line — it gets its own sentence, by name, in the
+brief itself rather than left for the page to say:
 
 > reviewer-correctness did not report, on two attempts. Nothing here covers
 > correctness; run `/harness:review` again before treating this as reviewed.
@@ -242,9 +270,9 @@ and that is the one fact the user cannot recover on their own. The failure this
 prevents is specific and it has happened: a dropped report, described as a clean
 one, over a change that had three defects in it.
 
-If everything was refuted, say exactly that. Sound work reviewing clean is a
-result, and manufacturing a finding to look diligent wastes a turn and costs
-trust.
+If everything was refuted, say exactly that in the brief. Sound work reviewing
+clean is a result, and manufacturing a finding to look diligent wastes a turn
+and costs trust.
 
 ## 7. Offer, do not act
 

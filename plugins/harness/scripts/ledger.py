@@ -160,7 +160,8 @@ def read_transcript(path: str, budget: float | None = None) -> dict[str, Any]:
     transcript on this machine (40MB, 70 subagents) takes 0.26s, which is why
     this is insurance rather than a fix; what it buys is that overrunning marks
     the totals `incomplete` instead of the process being killed part-way through
-    and the whole ledger line, roadmap entry included, being lost.
+    and the whole ledger line, along with the lessons harvested beside it, being
+    lost.
     """
     from time import monotonic
 
@@ -186,13 +187,29 @@ def read_transcript(path: str, budget: float | None = None) -> dict[str, Any]:
 
 
 # What `read_transcript` is allowed to spend of the 1.5 seconds every SessionEnd
-# hook on the machine shares. Leaves room for the roadmap append that runs first
+# hook on the machine shares. Leaves room for the lessons append that runs first
 # and for interpreter start-up, which is most of the rest.
 USAGE_BUDGET_SECONDS = 0.8
 
 
-def record(session: dict[str, Any], transcript_path: str | None) -> dict[str, Any]:
-    """Append one session summary to the ledger."""
+def record(
+    session: dict[str, Any],
+    transcript_path: str | None,
+    outcome: str | None = None,
+) -> dict[str, Any]:
+    """Append one session summary to the ledger.
+
+    `outcome` is `session_end.outcome_for`'s verdict on whether the plan held
+    against its own forecast. It arrives as an argument rather than being
+    computed here, even though `record` loads the contract anyway: the comparison
+    needs `files_touched` and `lines_changed` interpreted the way `outcome_for`
+    interprets them, and a second copy of that reading here would drift from the
+    first. It arrives as an argument rather than as a key on `session` because a
+    caller that forgot would then be indistinguishable from a session with no
+    plan, and that is the confusion this whole file exists to avoid.
+
+    `None` means nothing judged it, which is not the same as a plan that held.
+    """
     import contract as contract_mod
 
     usage = (
@@ -217,6 +234,7 @@ def record(session: dict[str, Any], transcript_path: str | None) -> dict[str, An
         "stop_blocks": session.get("consecutive_stop_blocks") or 0,
         "contract": bool(agreed and agreed.approved),
         "verdict": agreed.verdict if agreed else None,
+        "outcome": outcome,
         "usage": usage,
     }
     path = ledger_dir() / "sessions.jsonl"

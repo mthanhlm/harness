@@ -17,8 +17,8 @@ is a judgement about language, and a regex that tries it will be confidently
 wrong in both directions — waving through a vague request, or demanding a design
 debate over a typo, which is how a process gets switched off. What code does well
 is count things, so that is all this does: which paths the request names, how
-often each has already been rewritten, what the roadmap says happened last time,
-and whether the repo can check itself at all.
+often each has already been rewritten, and whether the repo can check itself
+at all.
 
 The evidence forces a route only where counting is enough to force it. Otherwise
 it hands the model the readings *and the decision rule* and lets it judge. That
@@ -36,8 +36,6 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import roadmap
-
 # A path is worth looking up if it carries a directory or an extension. Bare
 # words are not probed: "plan" and "state" are English before they are files, and
 # a false hit invents churn evidence for a file the request never mentioned.
@@ -53,8 +51,6 @@ CHURN_ARGUES = 3
 class Evidence:
     paths: list[str] = field(default_factory=list)
     churn: dict[str, int] = field(default_factory=dict)
-    reworked: list[str] = field(default_factory=list)
-    related: list[str] = field(default_factory=list)
     can_self_check: bool = False
     # Whether churn could be measured at all. Zero commits and no repository to
     # count them in are different readings, and only one of them is evidence.
@@ -126,20 +122,15 @@ def classify(request: str, root: Path) -> Evidence:
     except Exception:
         ev.can_self_check = False
 
-    hits = roadmap.touching(root, paths) if paths else []
-    ev.related = [f"{e.id} {e.title}" for e in hits]
-    ev.reworked = [f"{e.id} {e.title}" for e in hits if e.outcome == "reworked"]
-
     hot = [p for p, n in ev.churn.items() if n >= CHURN_ARGUES]
 
-    # Two findings are strong enough to route on their own, because both are
-    # counts rather than readings of intent.
-    if ev.reworked:
-        ev.route = "C"
-        ev.because.append(
-            f"a plan of this shape was already tried here and was reworked: {ev.reworked[0]}"
-        )
-    elif hot:
+    # This used to force route C first, ahead of churn, when the roadmap's
+    # newest entry touching one of these paths was marked `reworked` — the
+    # strongest signal this module had, because it meant a plan of this shape
+    # had already been tried and had not held. That signal no longer exists:
+    # the roadmap is gone and lessons carry no per-path outcome to force a
+    # route on. What is left is the churn heuristic below, on its own.
+    if hot:
         ev.route = "B"
         ev.because.append(
             f"{hot[0]} has been rewritten {ev.churn[hot[0]]} times — "
@@ -175,9 +166,6 @@ def render(ev: Evidence) -> str:
         lines.append("  named: " + ", ".join(named))
     else:
         lines.append("  named: no existing file named in the request")
-    for entry in ev.related:
-        mark = " [REWORKED]" if entry in ev.reworked else ""
-        lines.append(f"  roadmap: {entry}{mark}")
     lines += ["  " + b for b in ev.because]
 
     if ev.route == "undecided":

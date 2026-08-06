@@ -238,7 +238,24 @@ def test_session_start_announces_the_checks_a_repo_will_actually_run(
     )
 
 
-_STATE_DIRS = ("data_dir", "ledger_dir", "contracts_dir", "profiles_dir", "shards_dir")
+# Not only the directory helpers. Anything that resolves a path *under*
+# `data_dir()` inherits the same dependency on `CLAUDE_PLUGIN_DATA`, and a script
+# reaching state through `contract.contract_path` rather than `contracts_dir`
+# was invisible here — `report_page.py` wrote its page into `harness-local/`
+# against a contract living in the real plugin directory, found nothing, and
+# reported a path to an empty page. Blaming the script would be the wrong
+# lesson: it used the right helper. The check was looking one layer too high.
+_STATE_RESOLVERS = (
+    "data_dir",
+    "ledger_dir",
+    "contracts_dir",
+    "profiles_dir",
+    "shards_dir",
+    "contract_path",
+    "shard_path",
+    "load_session",
+    "session_state",
+)
 _SHELLS_OUT = re.compile(r"^(.*)python3 \"\$\{CLAUDE_PLUGIN_ROOT\}/scripts/(\w+\.py)\"", re.MULTILINE)
 
 
@@ -261,11 +278,11 @@ def _touches_plugin_state(source: str) -> bool:
     except SyntaxError:
         return True
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in _STATE_DIRS:
+        if isinstance(node, ast.Name) and node.id in _STATE_RESOLVERS:
             return True
-        if isinstance(node, ast.Attribute) and node.attr in _STATE_DIRS:
+        if isinstance(node, ast.Attribute) and node.attr in _STATE_RESOLVERS:
             return True
-        if isinstance(node, ast.alias) and node.name in _STATE_DIRS:
+        if isinstance(node, ast.alias) and node.name in _STATE_RESOLVERS:
             return True
     return False
 
@@ -350,9 +367,9 @@ def test_changing_plugin_code_without_bumping_the_version_is_caught_here():
     `claude plugin marketplace update` refreshes marketplace metadata but does
     not re-fetch a plugin whose version string it has already seen. It finds the
     version directory present, leaves it, and prints "Successfully updated" —
-    while the running hooks go on executing the previous code. The roadmap
-    records a full publish cycle lost to this, rediscovered only by listing the
-    cache directory by hand.
+    while the running hooks go on executing the previous code. This plugin's own
+    history records a full publish cycle lost to it, rediscovered only by listing
+    the cache directory by hand.
 
     What makes it worth a test rather than a note is how it presents: the fix
     appears not to work, which is indistinguishable from the fix being wrong. So
@@ -459,7 +476,7 @@ def test_no_agent_caps_its_own_loop(path):
     keys on the result being absent rather than on any theory of why.
 
     So this assertion encodes a decision — the user asked for the caps gone, and
-    the roadmap entry r14 measure of all agents at 6.3% of lifetime spend makes
+    the ledger's measure of all agents at 6.3% of lifetime spend makes
     that cheap — and not a mechanism. Do not cite it as evidence that capping a
     loop causes lost reports. If a future session wants a bound, the honest
     reasons to still hesitate are that the caps never bound anything measurable

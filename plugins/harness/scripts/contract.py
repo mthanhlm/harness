@@ -54,7 +54,7 @@ def section(text: str, heading: str) -> str:
     Both failures are silent and both are expensive. An empty scope list makes
     `_out_of_scope` return nothing, so the end-of-turn gate certifies every edit
     in the session as agreed; an empty section in `session_end` drops the
-    roadmap entry, so the session's decisions are never recorded at all.
+    lessons the session earned, so what it learned is never recorded at all.
 
     Deliberately generous, for the reason `_NOT_CHANGING_RE` below is: matching
     too much narrows the section, which is noisy, and matching too little empties
@@ -89,8 +89,12 @@ _NOT_CHANGING_RE = re.compile(
 # "~4 files, ~120 lines." — tolerant of the tilde, of "file"/"line", and of
 # whatever the model puts between the two numbers.
 _BUDGET_RE = re.compile(r"~?\s*(\d+)\s*files?\b.*?~?\s*(\d+)\s*lines?\b", re.IGNORECASE | re.DOTALL)
-_SUPERSEDES_RE = re.compile(r"^\s*supersedes:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
-_ID_RE = re.compile(r"\br\d+\b")
+# A plan used to name what it reversed in a `Supersedes:` header, read from
+# here and handed to the roadmap. It is gone with the roadmap, and not because
+# supersession stopped mattering: a header three hundred lines above the lesson
+# it retires says which entry dies but never which text replaces it, so the
+# pairing had to be reconstructed by hand and never was. It is declared on the
+# `## Lessons` bullet itself now — see `session_end._split_lesson`.
 
 
 def contract_path(session_id: str) -> Path:
@@ -127,17 +131,6 @@ class Contract:
         """
         match = _BUDGET_RE.search(self.text)
         return (int(match.group(1)), int(match.group(2))) if match else None
-
-    @property
-    def supersedes(self) -> list[str]:
-        """Roadmap entries this plan replaces, named as `Supersedes: r12, r14`.
-
-        Written by the plan when it finds it is reversing a past decision. Absent
-        on every contract written before 0.8, which is the correct default: an
-        entry is only retired when something explicitly says it should be.
-        """
-        match = _SUPERSEDES_RE.search(self.text)
-        return _ID_RE.findall(match.group(1)) if match else []
 
     @property
     def scoped_files(self) -> list[str]:

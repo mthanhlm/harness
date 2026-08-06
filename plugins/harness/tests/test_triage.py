@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import subprocess
 
-import roadmap
 import triage
 
 
@@ -41,29 +40,6 @@ def test_a_quiet_file_forces_nothing(git_repo):
 
     assert ev.route == "undecided"
     assert ev.paths == ["a.py"]
-
-
-def test_a_design_already_reworked_here_forces_the_full_debate(git_repo):
-    """The strongest evidence there is: this shape was tried and did not hold."""
-    entry = roadmap.append(git_repo, "cache the thing", "- decided: a.py grows a cache")
-    roadmap.set_outcome(git_repo, entry.id, "reworked")
-
-    ev = triage.classify("add caching to a.py", git_repo)
-
-    assert ev.route == "C"
-    assert entry.id in ev.reworked[0]
-    assert "already tried here" in " ".join(ev.because)
-
-
-def test_a_related_decision_that_held_is_reported_but_forces_nothing(git_repo):
-    """Past work on the same file is context, not an argument. Treating every
-    prior decision as an objection would route everything to C."""
-    roadmap.append(git_repo, "a.py got its shape", "- decided: a.py holds the value")
-
-    ev = triage.classify("change the value in a.py", git_repo)
-
-    assert ev.related and not ev.reworked
-    assert ev.route == "undecided"
 
 
 def test_language_is_never_classified_by_this_module(git_repo):

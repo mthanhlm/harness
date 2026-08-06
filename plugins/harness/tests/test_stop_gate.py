@@ -77,6 +77,65 @@ def test_a_gate_with_no_checks_says_nothing_to_verify_not_passed(data_dir, hook_
     assert "passed" not in outcomes, "a gate that ran no checks must not report passed"
 
 
+def test_a_clean_pass_still_says_something(data_dir, hook_env, tmp_path):
+    """A turn where every check passed must not end as silently as one where
+    the gate never ran at all.
+
+    The only `systemMessage` on the success branch used to sit behind
+    `if notes:`, and `notes` is empty exactly when nothing failed, nothing was
+    inherited and nothing was skipped — the good case. So the one turn the user
+    most wants confirmation on produced no signal whatsoever, indistinguishable
+    from the gate not having run. `systemMessage` costs the model nothing (it
+    never enters context), so there was no reason to stay quiet here.
+    """
+    repo = repo_with_a_real_suite(tmp_path)
+    edit = {
+        "session_id": "sess",
+        "cwd": str(repo),
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(repo / "tests" / "test_ok.py"), "new_string": "x = 1\n"},
+    }
+    run_hook("post_edit_check.py", edit, hook_env, repo)
+
+    response = run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    assert stop_lines(data_dir)[-1]["outcome"] == "passed", "the suite must be green first"
+    message = response.get("systemMessage", "")
+    assert message, "a clean pass must still produce a systemMessage"
+    assert "pytest" in message, f"the message must name the check that ran, got {message!r}"
+
+
+def test_an_unapproved_plan_does_not_swallow_the_passing_line(data_dir, hook_env, tmp_path):
+    """The two facts are independent, so reporting one must not silence the other.
+
+    The pending-contract note is appended to the same `notes` list the failures
+    go in, and the confirmation above sat in that list's `else`. So a green turn
+    with a plan still awaiting approval reported the plan and said nothing about
+    the suite — and that is the ordinary state during a plan, not an edge case:
+    `_pending_contract_note` was written because three of six contracts in one
+    day sat pending.
+    """
+    import contract as contract_mod
+
+    repo = repo_with_a_real_suite(tmp_path)
+    contract_mod.contract_path("sess").write_text(
+        "# Plan: x\n\nstatus: pending\nverdict: patch\n", encoding="utf-8"
+    )
+    edit = {
+        "session_id": "sess",
+        "cwd": str(repo),
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(repo / "tests" / "test_ok.py"), "new_string": "x = 1\n"},
+    }
+    run_hook("post_edit_check.py", edit, hook_env, repo)
+
+    response = run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    message = response.get("systemMessage", "")
+    assert "never approved" in message, "the pending plan must still be reported"
+    assert "pytest" in message, f"the passing check was swallowed by the note, got {message!r}"
+
+
 def test_a_shell_edit_makes_the_gate_run_again(data_dir, hook_env, tmp_path):
     """The skip key has to move when a shell command changes a file.
 

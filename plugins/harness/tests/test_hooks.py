@@ -268,8 +268,8 @@ def test_a_deletion_is_counted_by_what_it_removed(data_dir, git_repo, hook_env):
 
     That number is not decoration. `session_end.outcome_for` compares it against
     the plan's `~N lines` forecast to decide whether the plan `held` or was
-    `reworked`, and the roadmap entry it writes is the evidence the challenger
-    cites at the start of the next plan. A large deletion recorded as one line is
+    `reworked`, and that verdict is written into the ledger entry for the session.
+    A large deletion recorded as one line is
     a session that overran its own forecast and was written down as having met it.
     """
     import post_edit_check

@@ -269,8 +269,7 @@ def test_a_transcript_that_reads_cleanly_is_not_marked(tmp_path):
 def test_the_subagent_scan_stops_on_its_deadline_and_says_so(tmp_path):
     """`SessionEnd` hooks share a 1.5s budget and a plugin's own `timeout` cannot
     raise it, so overrunning means the process is killed — losing the ledger line
-    and the roadmap entry written beside it. Stopping early and saying so keeps
-    both.
+    and the lessons harvested beside it. Stopping early and saying so keeps both.
     """
     path = tmp_path / "s.jsonl"
     write_transcript(path, [("claude-opus-4-1", 1000)])

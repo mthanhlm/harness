@@ -61,9 +61,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/triage.py" "$ARGUMENTS"
 ```
 
 It counts what can be counted — which named files exist, how many commits have
-already rewritten each, what the roadmap recorded about them, whether this repo
-can test itself at all — and then either forces a route or hands you the readings
-and the decision rule.
+already rewritten each, whether this repo can test itself at all — and then
+either forces a route or hands you the readings and the decision rule.
 
 **It deliberately does not read the request's language.** Whether a goal is clear
 is your judgement, and when the output says `route: YOURS TO DECIDE` you make it
@@ -100,34 +99,40 @@ fresh clone has none even with CodeGraph installed globally:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codegraph_ready.py"
 ```
 
-Read what this project already decided, before deciding anything:
+Read what this project has already learned, before deciding anything:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" show          # the index
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" show r14      # one entry
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/roadmap.py" touching src/auth/session.ts
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lessons.py" show
 ```
 
-`show` prints an index — one line per decision still in force, with its id and
-what became of it. **Open the two or three that touch this request; do not read
-them all.** The whole file used to be read here, and at 36KB that was nine
-thousand tokens spent to surface the two entries that mattered.
+`show` prints every lesson still recorded, each with its id. Lessons are
+durable — things that stay true — not a log of one entry per session, so the
+list stays short enough to read in full rather than needing an index to skim.
 
-Every session otherwise starts from nothing — the same ground gets re-covered
-and the same deferred item gets deferred again. If the roadmap names something
-this request touches, say so out loud rather than silently re-litigating it. And
-if it contradicts what is being asked for now, that is worth raising: a past
-decision is evidence, not an instruction, but reversing one by accident is how a
-codebase acquires two of everything.
+Every session otherwise starts from nothing — the same mistake gets made twice
+and the same correction gets rediscovered from scratch. If a lesson names
+something this request touches, say so out loud rather than silently repeating
+it. And if this request would reverse what a lesson says, that is worth
+raising: a lesson is evidence, not an instruction, but reversing one by
+accident is how a codebase relearns the same lesson twice.
 
-**An entry marked `reworked` is the strongest evidence you have.** It means a
-plan of that shape was already tried here and did not survive contact with the
-code. Say so before proposing the same shape again.
+**A lesson that was later revised is the strongest evidence you have.** It
+means something of this shape was already tried here and turned out wrong —
+the correction sits beside the original entry rather than replacing it. Say so
+before proposing the same shape again.
 
-When this plan genuinely reverses a past decision, name it in the contract's
-`Supersedes:` line. That retires the old entry — it leaves the index and stays in
-the file, pointing at this one — instead of leaving two contradictory decisions
-both presented as current.
+When this plan genuinely reverses a lesson, open the replacement bullet in
+`## Lessons` with `supersedes <id>:` — for example `- supersedes L3: releasing
+takes three commands now, and the last is a restart`. The hook that harvests the
+section does the rest: the old lesson stays on record, marked, with the
+correction pointing back at it, instead of leaving a lesson and a plan that
+quietly disagree. `lessons.py revise <id>` does the same thing by hand when you
+are not writing a contract.
+
+The declaration rides on the bullet on purpose. It used to be a `Supersedes:`
+header at the top of the contract, which named the entry that died but never the
+text that replaced it — so the pairing had to be reconstructed by hand at the end
+of a long turn, and it never was.
 
 It builds the index if it is missing, does nothing if it is already there, and
 says so plainly if CodeGraph is unavailable. Relay its line to the user when it
@@ -159,8 +164,8 @@ already been rewritten, whether it exists already, and a verdict that includes
 
 **Relay what it returns, in two piles, and keep them apart.**
 
-- **Blocking** — objections carrying a citation: a file and line, a roadmap
-  entry id, or a churn count. These go to the user through `AskUserQuestion`
+- **Blocking** — objections carrying a citation: a file and line, a lesson
+  id, or a churn count. These go to the user through `AskUserQuestion`
   before you draft anything. They have to answer; you do not get to decide on
   their behalf that the objection was minor.
 - **Advisory** — objections from judgement, with no evidence behind them. Relay
@@ -178,7 +183,9 @@ the objection quietly disappearing.
 
 **Their answers are the start of the interview, not a substitute for it.** A
 blocking objection they overrule goes into the contract's Disagreement section
-with their reason — on the record, and cited back by the roadmap next time.
+with their reason — on the record. If it will still hold true past this
+session, it belongs in the contract's `## Lessons` section too, so the next
+session inherits it instead of relitigating it from scratch.
 
 ## Stage 1c — Interview
 
@@ -270,7 +277,7 @@ difference to justify having run two agents.
 
 The chosen design becomes the plan. Points where they agreed need no further
 argument — carry them into the contract as written, including the **Prediction**,
-which the roadmap will check against what actually happened.
+which a later session will judge against what actually happened.
 
 ## Stage 2 — Draft the whole picture
 
@@ -297,8 +304,6 @@ neither should you.
 
 status: pending
 verdict: patch | refactor-first | rewrite | don't build this
-Supersedes: <roadmap ids this reverses, e.g. `r12, r14` — omit the line entirely
-if it reverses nothing, which is the normal case>
 
 ## Goal
 <What the person is trying to achieve, in their terms, not yours. One paragraph.>
@@ -356,20 +361,34 @@ Two or three sentences.>
 
 **Every blocking objection the user overruled goes here, with their reason**, and
 so does every gap you noticed and decided yourself rather than asking about. Both
-are decisions the user never got to make, and this is the one section the roadmap
-carries forward verbatim — so a thing argued about and settled here is what the
-next session inherits. Leave it out and the same argument happens again in a
-month, from scratch, by someone with no idea it was ever had.>
+are decisions the user never got to make. Leave it out and the same argument
+happens again in a month, from scratch, by someone with no idea it was ever
+had — write in `## Lessons` below whichever of these will still be true past
+this session, so it survives rather than sitting here for nobody to read again.>
+
+## Lessons
+<Optional. What this session learned that will still be true in three months —
+not a status report about work currently in flight. A hook harvests this
+section when the session ends, so what qualifies has to survive the session
+ending: "the retry queue silently drops messages over 256KB" is a lesson;
+"finished the retry queue this session" is not one, it is the Verdict restated.
+Omit the section entirely when there is nothing that will outlive this session —
+most plans have nothing here, and that is fine.>
+- <One dashed bullet each, written as `Title: what was learned.` The title is
+  the text before the first colon, and it is what the next session sees in its
+  index — so `the retry queue drops messages over 256KB: the broker caps a
+  frame and the producer never hears about it` reads there; `detect.py: fixed`
+  does not.>
+- <supersedes L3: open a bullet this way when it corrects a lesson already on
+  file. The old one is kept and marked, not overwritten.>
 
 ## Budget
 ~N files, ~N lines.
-<**Write this every time, and mean it.** It is not decoration: when the session
-ends, what actually changed is compared against this line, and the roadmap entry
-is recorded as `held` or `reworked` on the result. A plan that predicted four
-files and a hundred lines, executed as nine files and nine hundred, was not built
-— it was redesigned while being built, and that is the one thing this flow exists
-to catch. Omit the line and the outcome records as `open`, which teaches the next
-session nothing.>
+<**Write this every time, and mean it.** It is not decoration: a plan that
+predicted four files and a hundred lines, executed as nine files and nine
+hundred, was not built — it was redesigned while being built, and that is the
+one thing this flow exists to catch. What actually changed gets compared
+against this line at the end, so write it and mean it.>
 
 ## Verification
 Command that proves this works: `<exact command>`
@@ -452,26 +471,61 @@ Do not skip this because the work looks fine. Looking fine is what a defect does
 
 ## Stage 6 — Report, and leave a record
 
-In order: what was built, the verification command and its real output, what the
-review found, and anything you deliberately left alone because it was out of
-scope. That last list is the backlog the scope fence protected you from wandering
-into.
+The complaint this stage exists to answer, in the user's own words: the end of a
+run used to hand them "a pile of text I can't follow." So two things end the run
+now, not one long report — a short prose brief in the chat, and a link to a page
+holding everything the brief left out.
 
-If the review found nothing, say so plainly. Sound work reviewing clean is a
-result.
+### The page
+
+```bash
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/report_page.py" write
+```
+
+This prints the absolute path of a self-contained HTML page rendering the
+contract, the recorded lessons and this session's state, and writes a second
+file beside it with `.fragment.html` in place of `.html`.
+
+**Publish the `.fragment.html` one** with the Artifact tool, and hand the user
+the link it returns. The two files hold the same body; the printed one is a
+complete document so it opens from `file://` and from the status line, and the
+fragment carries no frame of its own because the Artifact tool supplies one.
+Publishing a complete document through it nests one page inside another.
+
+Publishing the same path again later in the session updates the same artifact
+rather than minting a new one, so the link the user already opened stays live —
+that stability is the reason this exists, not a side effect of it.
+
+The full contract, the scope list and the lessons all live on the page. Do not
+restate them in chat — repeating the page in prose is the pile of text again,
+just reformatted.
+
+### The brief
+
+A few short paragraphs, not a template. Say what changed, what was verified —
+the exact command and its real result — and anything the user has to decide.
+Plain bullets where a list genuinely helps. No box-drawing, no column alignment,
+no layout that depends on how wide the user's terminal happens to be: an earlier
+version of this stage specified a fixed ASCII block and it was rejected on sight
+as unreadable. Short and plainly written is what was actually asked for.
 
 **"Found nothing" and "did not report" are different results, and only one of
 them is good news.** The review skill names any role whose findings never
-arrived; carry that sentence through to here verbatim rather than collapsing it
-into the clean line. A review with two roles silent is not a review that passed —
-it is a review with a hole in it, and this stage is the last place the user can
-be told. Report it as its own line, by role name, with what it means:
+arrived. That sentence belongs in the brief itself, not only on the page — it is
+something the user has to know, not a detail:
 
-> reviewer-correctness did not report, on two attempts. Nothing in this covers
+> reviewer-correctness did not report, on two attempts. Nothing here covers
 > correctness — the verification command passing is not a substitute.
 
-The roadmap writes itself when the session ends — `session_end.py` derives the
-entry from the contract's Verdict, Disagreement and "Explicitly NOT changing"
-sections. That is worth knowing while you write the plan rather than after: those
-three sections are what the next session inherits, so a Disagreement recorded as
-"None." and an empty exclusion list leave it nothing.
+If the review found nothing, say so plainly in the brief. Sound work reviewing
+clean is a result and earns its place in two lines, not just a mention on the
+page.
+
+Anything you deliberately left alone because it was out of scope belongs on the
+page, not the brief — it is the backlog the scope fence protected you from
+wandering into, not something the user needs to act on right now.
+
+A hook harvests the contract's `## Lessons` section when the session ends, so
+what actually gets inherited by the next session is whatever you wrote there
+while drafting the contract — not the Disagreement section, and not anything
+said for the first time here.

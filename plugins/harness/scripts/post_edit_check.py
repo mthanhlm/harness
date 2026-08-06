@@ -88,9 +88,9 @@ def _edit_size(event: dict) -> int:
     `new_string` alone made a deletion cost one line however much it removed, and
     `lines_changed` is what `session_end.outcome_for` compares against the plan's
     `~N lines` forecast — so a session that predicted a hundred lines and then
-    tore out nine hundred was recorded in the roadmap as having `held`. The
-    roadmap is the evidence the challenger cites at the start of the next plan,
-    and this is the number that decides whether it says "this was reworked".
+    tore out nine hundred was recorded as having `held`. That comparison is the
+    one measurement here nobody has to trust a model to self-report, which is why
+    it survived the roadmap being deleted and now lands in the ledger entry.
     """
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
