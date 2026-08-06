@@ -472,33 +472,15 @@ Do not skip this because the work looks fine. Looking fine is what a defect does
 ## Stage 6 — Report, and leave a record
 
 The complaint this stage exists to answer, in the user's own words: the end of a
-run used to hand them "a pile of text I can't follow." So two things end the run
-now, not one long report — a short prose brief in the chat, and a link to a page
-holding everything the brief left out.
+run used to hand them "a pile of text I can't follow." The answer is a short
+prose brief, and nothing else.
 
-### The page
-
-```bash
-CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/report_page.py" write
-```
-
-This prints the absolute path of a self-contained HTML page rendering the
-contract, the recorded lessons and this session's state, and writes a second
-file beside it with `.fragment.html` in place of `.html`.
-
-**Publish the `.fragment.html` one** with the Artifact tool, and hand the user
-the link it returns. The two files hold the same body; the printed one is a
-complete document so it opens from `file://` and from the status line, and the
-fragment carries no frame of its own because the Artifact tool supplies one.
-Publishing a complete document through it nests one page inside another.
-
-Publishing the same path again later in the session updates the same artifact
-rather than minting a new one, so the link the user already opened stays live —
-that stability is the reason this exists, not a side effect of it.
-
-The full contract, the scope list and the lessons all live on the page. Do not
-restate them in chat — repeating the page in prose is the pile of text again,
-just reformatted.
+A rendered HTML page and a published artifact were built for this and then
+removed at the user's request — they decided they did not want either. Do not
+propose generating a page, publishing an artifact, or writing a report to a file
+unless they ask for one by name. The contract is already on disk and they know
+where; the brief's job is to be short enough to read, not to point somewhere
+else.
 
 ### The brief
 

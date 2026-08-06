@@ -241,10 +241,15 @@ def test_session_start_announces_the_checks_a_repo_will_actually_run(
 # Not only the directory helpers. Anything that resolves a path *under*
 # `data_dir()` inherits the same dependency on `CLAUDE_PLUGIN_DATA`, and a script
 # reaching state through `contract.contract_path` rather than `contracts_dir`
-# was invisible here — `report_page.py` wrote its page into `harness-local/`
-# against a contract living in the real plugin directory, found nothing, and
-# reported a path to an empty page. Blaming the script would be the wrong
-# lesson: it used the right helper. The check was looking one layer too high.
+# was invisible here. Found when a script did exactly that: it read a contract
+# out of `harness-local/` while the real one sat in the plugin's data directory,
+# found nothing, and reported success against the emptiness. Blaming that script
+# would have been the wrong lesson — it used the right helper. The check was
+# looking one layer too high.
+#
+# That script has since been removed, and nothing in the plugin currently reaches
+# state through the last four names. Not a reason to narrow the list back: this
+# guards the next one, and it exists because the obvious version of it did not.
 _STATE_RESOLVERS = (
     "data_dir",
     "ledger_dir",

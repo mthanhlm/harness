@@ -225,28 +225,18 @@ link to a page holding the findings in full. A review run on its own has no
 plan skill upstream that already set this up, so do it here regardless of
 whether a plan started this session.
 
-### The page
+### The findings
 
-Before writing it, sort what survived refutation into one list, most severe
-first — silently-wrong data above crashes, crashes above degraded behaviour,
-everything real above anything cosmetic. For each: file and line, one sentence
-naming the defect, and the concrete scenario that produces it. This list is
-what the page renders; it is not what goes in the chat message.
+Sort what survived refutation into one list, most severe first — silently-wrong
+data above crashes, crashes above degraded behaviour, everything real above
+anything cosmetic. For each: file and line, one sentence naming the defect, and
+the concrete scenario that produces it.
 
-```bash
-CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/report_page.py" write
-```
-
-It writes two files: the path it prints, a complete document that opens from
-`file://`, and the same body with `.fragment.html` in place of `.html`.
-
-**Publish the `.fragment.html` one** with the Artifact tool and hand the user the
-link. That tool wraps whatever it is given in its own document skeleton, so
-publishing the complete one nests a page inside a page.
-
-Publishing the same path again later in the session updates the same artifact
-rather than minting a new one, so a link the user already opened stays live
-across a second pass at the same review.
+Report that list in chat, below the brief. A rendered page and a published
+artifact were built to hold it instead and then removed at the user's request;
+do not propose either again unless asked by name. A long list is only a problem
+when it is unsorted — severity order is what makes it readable, not a different
+medium.
 
 ### The brief
 

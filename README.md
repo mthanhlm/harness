@@ -252,62 +252,19 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/lessons.py" add
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/lessons.py" revise <id>
 ```
 
-## The closing report is a link, not a wall of chat
+## The closing report is a brief, not a wall of chat
 
 A run used to end with the contract, the scope list and everything else typed
 straight into the chat transcript — "a pile of text I can't follow," in the
-words of the person who has to read it every time. `report_page.py write
-[session-id]` builds a self-contained HTML page rendering the contract, the
-recorded lessons and the session's state, and prints that page's absolute path:
+words of the person who has to read it every time. Both skills now end in a few
+short paragraphs: what changed, what was verified with the exact command and its
+real result, and anything you have to decide. The contract is already on disk if
+you want the rest.
 
-```bash
-CLAUDE_PLUGIN_DATA="$CLAUDE_PLUGIN_DATA" python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_page.py" write
-```
-
-The environment variable is not decoration. A shell does not inherit
-`CLAUDE_PLUGIN_DATA` the way a hook is given it, so without it the script
-resolves a different data directory than every hook, finds no contract there,
-and prints the path of a page it just wrote with nothing on it.
-
-`/harness:plan` and `/harness:review` publish that path with the Artifact tool
-and hand you the resulting link, and keep the chat message itself to a short
-brief — what changed, what was verified, and anything you have to decide.
-Writing to the same path again later in the same session updates that artifact
-rather than minting a new one, so a link you already opened keeps working
-instead of going stale.
-
-### The same thing, always on screen
-
-A link handed over in a message has scrolled away by the time you want it. The
-status line is the only surface that does not, so `report_page.py link` prints
-one line built for it — the plan's verdict, its status, and a `file://` URL to
-the page once one has been written. Claude Code hands a status-line command its context as JSON on stdin, so that is
-where the session id comes from — but **pass it as an argument** if your script
-does anything else with that JSON:
-
-```bash
-input=$(cat)
-session=$(printf '%s' "$input" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("session_id",""))')
-CLAUDE_PLUGIN_DATA="$CLAUDE_PLUGIN_DATA" python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_page.py" link "$session"
-```
-
-Reading stdin consumes it. A script that renders anything of its own about the
-session has already done that `cat`, and by the time the harness line runs stdin
-is at EOF — so it finds no session id and prints nothing, which looks exactly
-like a session with no plan. `CLAUDE_CODE_SESSION_ID` does not cover the gap:
-that variable is exported to Bash tool calls, not to the status-line process.
-Only when the harness line is the first thing in the script can the argument be
-left off.
-
-It prints nothing at all for a session with no contract, and exits 0 whatever
-happens. Both are deliberate: a status line that announces "no contract" on
-every session that never needed one stops being read, and a traceback there
-lands in the one place on screen that redraws constantly.
-
-It does not render the page — that runs on the editor's cadence, not the turn's,
-and rebuilding an HTML file that often to show a link would cost more than the
-link is worth. Before the first page is written the line still carries the
-verdict and the status, which is the part that changes.
+A rendered HTML page and a published artifact were built for this and then
+removed, at the same person's request, after they saw them. That is recorded
+here because the idea is an obvious one to have again: if the closing report is
+too long, the fix is a shorter brief, not a second place to put the long one.
 
 ## Something argues with the request before a plan exists
 
