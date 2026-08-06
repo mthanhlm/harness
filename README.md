@@ -25,8 +25,13 @@ session.** That command refreshes marketplace metadata but does not re-fetch a
 plugin whose version it has already seen — it finds the version directory
 present, leaves it, and reports success while the hooks go on executing the old
 code. The failure reads as "I fixed it and nothing changed", so the next move is
-usually to go and change correct code. A test now fails when anything under
-`plugins/` changes without the version moving.
+usually to go and change correct code. `python3 -m pytest -m prepublish` fails
+when anything under `plugins/` changes without the version moving — **run it
+before publishing.** It is deselected from a plain `pytest` on purpose: it is the
+only check here that asserts a property of the working tree rather than of the
+code, so leaving it in the default run made every mutation test pass by
+definition, and a sweep of eighteen scored eighteen against a suite that was
+blind to several of them.
 
 To develop against a local clone instead — edits take effect on the next session
 with no push cycle:
@@ -341,7 +346,7 @@ against a detached worktree of `HEAD` — and only genuinely new diagnostics are
 reported. This is the single most important behaviour in the plugin.
 
 **One job needs several kinds of expertise at once.** Domain knowledge lives in
-fourteen lens pages under `references/lenses/`; jobs live in role agents that run
+twelve lens pages under `references/lenses/`; jobs live in role agents that run
 in their own context, so a single reviewer can hold frontend, backend, database
 and Python at once.
 

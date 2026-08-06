@@ -351,7 +351,7 @@ def summarize(entries: list[dict[str, Any]]) -> str:
     ]
     if measured:
         out += [
-            f"Per-edit checks: {checks_run} run, {checks_failed} caught a problem the edit introduced",
+            f"Per-edit checks: {checks_run} run, {checks_failed} blocked the edit",
             f"Contracts agreed before coding: {contracts} of {len(measured)} sessions",
         ]
     if unmeasured:
@@ -369,9 +369,16 @@ def summarize(entries: list[dict[str, Any]]) -> str:
         )
     if checks_run:
         rate = checks_failed / checks_run * 100
+        # The counter behind `checks_failed` records only pass/fail per edit — it
+        # cannot tell a broken test from an unused import, so it cannot support
+        # the word "defect". A hand-classified sample of 59 real blocks was 53
+        # eslint (overwhelmingly @typescript-eslint/no-unused-vars), 3 ruff, 2
+        # json syntax and 1 oxlint: lint and syntax hygiene, not confirmed bugs.
+        # Say what was measured, not what the number cannot prove.
         out.append(
-            f"A check blocked {rate:.1f}% of the time — each one is a defect that did not"
-            " reach the end of the turn."
+            f"A check blocked {rate:.1f}% of the time — mostly lint and syntax"
+            " hygiene (unused variables, line length, malformed config) caught"
+            " before it reached the end of the turn, not confirmed defects."
         )
 
     rows = rework(entries)

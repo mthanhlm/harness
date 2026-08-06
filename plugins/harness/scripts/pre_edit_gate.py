@@ -28,6 +28,7 @@ from state import (
     read_event,
     read_json,
     session_state,
+    shard_is_accountable,
     shard_path,
     shards_dir,
     writer_id,
@@ -72,6 +73,16 @@ def _other_worker_holding(session_id: str, writer: str, target: str) -> str | No
     Only other *workers* count. The lead legitimately touches files before it
     fans out — it writes the failing test first — so counting `main` here would
     deny the worker that owns the test file it just wrote.
+
+    That sentence was unenforceable until shards started carrying `agent`, and it
+    was false: reviewers hold `Bash`, so any command of theirs that dirties a
+    tracked file — a mutation sweep, a build emitting `dist/`, a formatter — was
+    recorded in their own shard, and `files_touched` is append-only, so it stayed
+    there. The next worker sent to that file was denied with "already written by
+    agent-7, which owns a different slice of this plan". It owns no slice, the
+    worker handed the file back, and the lead read it as a real conflict.
+    `shard_is_accountable` is the same test `_merge_shards` applies, shared so
+    the two cannot drift apart again.
     """
     posix = Path(target).as_posix()
     # This writer's *shard name*, not its raw id. Shard files are named through
@@ -87,7 +98,7 @@ def _other_worker_holding(session_id: str, writer: str, target: str) -> str | No
         if other in (own, "main"):
             continue
         record = read_json(shard, default=None)
-        if not isinstance(record, dict):
+        if not isinstance(record, dict) or not shard_is_accountable(record):
             continue
         if any(Path(p).as_posix() == posix for p in (record.get("files_touched") or [])):
             return other

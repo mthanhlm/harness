@@ -38,6 +38,14 @@ def touched(names_only: bool = True) -> list[str]:
     return sorted(Path(f).name for f in files) if names_only else files
 
 
+def bash_lines(data_dir: Path) -> list[dict]:
+    log = data_dir / "gate.log"
+    if not log.exists():
+        return []
+    entries = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [e for e in entries if e.get("hook") == "Bash"]
+
+
 def test_a_file_edited_through_bash_reaches_the_fence(data_dir, git_repo, hook_env):
     before(git_repo, hook_env)
     (git_repo / "a.py").write_text("value = 2\n", encoding="utf-8")
@@ -189,6 +197,39 @@ def test_a_command_that_failed_still_had_its_writes_recorded(data_dir, git_repo,
     run_hook("bash_watch.py", event, hook_env, git_repo)
 
     assert "a.py" in touched(), "a failing command's writes reached no gate"
+
+
+def test_a_missing_sample_outside_a_git_repo_is_traced_as_permanent(data_dir, tmp_path, hook_env):
+    """The common case, measured at 983 of 1,017 real skips: this is not one
+    sample that happened not to be taken, it is a directory this detector can
+    never work in, and every later command here logs the identical `skipped`
+    line. Logged apart from a genuinely lost sample so a reader does not draw a
+    transient conclusion about a permanent condition — nearly done for real
+    before the count was broken down per directory."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    run_hook("bash_watch.py", bash(plain), hook_env, plain)
+
+    outcomes = [e["outcome"] for e in bash_lines(data_dir)]
+    assert "skipped: not a git repository" in outcomes, outcomes
+    assert "skipped: no pre-command sample" not in outcomes, (
+        "a directory with no git repo at all is not a transient missed sample"
+    )
+
+
+def test_a_missing_sample_inside_a_git_repo_is_still_traced_as_a_miss(data_dir, git_repo, hook_env):
+    """The other half: gates switched on mid-session, or a resumed session, in
+    a directory the detector can genuinely work in. This one really is a single
+    sample that was not taken, and must not be folded into the permanent case."""
+    (git_repo / "a.py").write_text("changed with no sample taken\n", encoding="utf-8")
+
+    run_hook("bash_watch.py", bash(git_repo), hook_env, git_repo)
+
+    outcomes = [e["outcome"] for e in bash_lines(data_dir)]
+    assert "skipped: no pre-command sample" in outcomes, outcomes
+    assert "skipped: not a git repository" not in outcomes
 
 
 def test_a_powershell_command_is_watched_too(data_dir, git_repo, hook_env):

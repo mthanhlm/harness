@@ -281,6 +281,52 @@ def test_a_shell_command_that_reverts_a_file_makes_the_gate_run_again(
     assert verdict.get("decision") == "block", f"the suite is red; the turn must not end: {verdict}"
 
 
+def test_a_reviewer_dirtying_the_tree_still_makes_the_gate_run_the_checks(
+    data_dir, hook_env, tmp_path
+):
+    """An empty `files_touched` is not a claim that the project stands still.
+
+    `files_touched` names what a writer can be asked to justify. Two things empty
+    it over a dirty tree: `bash_watch` counts a command that *reverted* a file
+    into `shell_changes` and appends no path, and `_merge_shards` drops the paths
+    of any writer that is not write-capable. So a `/harness:review` turn whose
+    lead edits nothing, while a reviewer mutation-tests through Bash, reaches the
+    gate with nothing in the list.
+
+    Returning on that alone skipped the **project checks**, not merely the scope
+    fence — the turn ended green over a red suite, which is the single outcome
+    this gate exists to prevent. It was introduced by the attribution fix in this
+    same change and caught in review, reproduced against HEAD where the identical
+    state blocks. The guard now needs all three counters to be still.
+    """
+    repo = repo_with_a_real_suite(tmp_path)
+    (repo / "tests" / "test_ok.py").write_text("def test_ok():\n    assert False\n", encoding="utf-8")
+
+    from state import shard_path
+
+    shard_path("sess", "agent-7").parent.mkdir(parents=True, exist_ok=True)
+    shard_path("sess", "agent-7").write_text(
+        json.dumps(
+            {
+                "agent": "reviewer-tests",
+                "files_touched": [str(repo / "tests" / "test_ok.py")],
+                "shell_changes": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verdict = run_hook("stop_gate.py", {"session_id": "sess", "cwd": str(repo)}, hook_env, repo)
+
+    last = stop_lines(data_dir)[-1]["outcome"]
+    assert not last.startswith("skipped"), (
+        f"a dirty tree with no attributable writer must still be checked, got {last!r}"
+    )
+    assert verdict.get("decision") == "block", (
+        f"the suite is red; the turn must not end: {verdict}"
+    )
+
+
 def test_reverting_a_file_the_session_never_touched_does_not_claim_it(
     data_dir, hook_env, tmp_path
 ):
@@ -588,6 +634,133 @@ def test_a_path_outside_the_repo_root_is_matched_only_at_a_separator(data_dir, h
         "/elsewhere/src/other-utils.ts"
     ]
     assert stop_gate._out_of_scope("outside", ["/elsewhere/src/utils.ts"], root) == []
+
+
+def test_a_reviewers_mutation_is_not_the_main_turns_stray(data_dir, tmp_path):
+    """A reviewer breaking code on purpose is not the turn's scope creep.
+
+    Reviewers mutation-test: edit a file, run the suite, restore it. Every hook
+    fired inside a subagent carries the *main* session id, so those edits land in
+    the same session's accumulators, and `_merge_shards` unioned every writer's
+    `files_touched` into one accountability view. The main turn was then accused
+    of files it never touched.
+
+    Observed five times in one session — `local_ignore.py`, `lsp.py`,
+    `ledger.py`, `prompt_gate.py` and the lens-selection path — each blocking the
+    turn with "this session caused it, fix the cause", pointing at correct code.
+    Obeying that means either editing working code to satisfy a deliberately
+    broken test, or reverting a reviewer's file mid-sweep, which silently makes
+    every later mutation measure HEAD instead.
+
+    Only `worker` may edit — `test_wiring.test_write_capable_agents_are_named_here_on_purpose`
+    pins that — so a shard belonging to any other named agent is by construction
+    an experiment rather than work.
+    """
+    import stop_gate
+    from state import load_session, shard_path
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    approved_contract("sess", ["src/mine.ts"])
+
+    shard_path("sess", "main").parent.mkdir(parents=True, exist_ok=True)
+    shard_path("sess", "main").write_text(
+        json.dumps({"files_touched": [str(root / "src/mine.ts")]}), encoding="utf-8"
+    )
+    shard_path("sess", "agent-7").write_text(
+        json.dumps(
+            {"agent": "reviewer-correctness", "files_touched": [str(root / "scripts/victim.py")]}
+        ),
+        encoding="utf-8",
+    )
+
+    touched = load_session("sess")["files_touched"]
+    assert str(root / "src/mine.ts") in touched, (
+        "positive control: without this the test also passes when the merge drops"
+        " every path, which is the same silence a broken fence produces"
+    )
+    assert str(root / "scripts/victim.py") not in touched, (
+        "a non-writing reviewer's mutation was folded into the main turn's ledger"
+    )
+    assert stop_gate._out_of_scope("sess", touched, root) == [], (
+        "the fence accused the main turn of a file only a reviewer touched"
+    )
+
+
+def test_the_agent_name_the_fence_relies_on_is_really_written(data_dir, git_repo, hook_env):
+    """The producer of `agent`, run into its consumer rather than hand-written.
+
+    `_merge_shards` can only exclude a reviewer's shard because `subagent_start`
+    stamped `agent` on it — `writer_id` yields an opaque `agent_id` and an id
+    says nothing about kind. Every other test of the exclusion writes that key by
+    hand, so deleting the one line in `subagent_start.py` that produces it left
+    the entire attribution fix inert with the whole suite green. Caught by
+    mutation, not by review.
+
+    This is the failure mode that matters most here, because it is silent in the
+    dangerous direction: with no `agent` key every shard defaults to accountable,
+    which is exactly the behaviour this change exists to remove, and nothing
+    anywhere would say so.
+    """
+    import json as _json
+
+    from state import load_session, shard_path
+
+    run_hook(
+        "subagent_start.py",
+        {
+            "session_id": "sess",
+            "cwd": str(git_repo),
+            "hook_event_name": "SubagentStart",
+            "agent_id": "agent-7",
+            "agent_type": "harness:reviewer-correctness",
+        },
+        hook_env,
+        git_repo,
+    )
+
+    produced = _json.loads(shard_path("sess", "agent-7").read_text(encoding="utf-8"))
+    assert produced.get("agent") == "reviewer-correctness", (
+        "subagent_start no longer records which agent a shard belongs to, so the"
+        f" fence cannot tell a reviewer from a worker: {produced}"
+    )
+
+    produced["files_touched"] = [str(git_repo / "scripts/victim.py")]
+    shard_path("sess", "agent-7").write_text(_json.dumps(produced), encoding="utf-8")
+    approved_contract("sess", ["src/mine.ts"])
+
+    assert str(git_repo / "scripts/victim.py") not in load_session("sess")["files_touched"], (
+        "a mutation recorded under a reviewer's own shard reached the main turn's ledger"
+    )
+
+
+def test_a_workers_edit_is_still_the_turns_responsibility(data_dir, tmp_path):
+    """The other direction, so the fix above cannot pass by dropping everything.
+
+    `worker` is write-capable and builds real slices of an approved plan, so its
+    edits are the turn's to answer for. An unnamed writer is treated the same
+    way: excluding by default would turn an unrecognised agent into a hole in the
+    fence, and the fence failing open reads exactly like a clean turn.
+    """
+    import stop_gate
+    from state import load_session, shard_path
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    approved_contract("sess", ["src/mine.ts"])
+
+    shard_path("sess", "agent-w").parent.mkdir(parents=True, exist_ok=True)
+    shard_path("sess", "agent-w").write_text(
+        json.dumps({"agent": "worker", "files_touched": [str(root / "src/strayed.ts")]}),
+        encoding="utf-8",
+    )
+    shard_path("sess", "agent-unknown").write_text(
+        json.dumps({"files_touched": [str(root / "src/unnamed.ts")]}), encoding="utf-8"
+    )
+
+    strays = stop_gate._out_of_scope("sess", load_session("sess")["files_touched"], root)
+    assert str(root / "src/strayed.ts") in strays, "a worker's out-of-scope edit must still be named"
+    assert str(root / "src/unnamed.ts") in strays, "an unnamed writer must default to accountable"
 
 
 def test_a_monorepo_package_json_at_the_wrong_path_is_still_a_stray(data_dir, hook_env, tmp_path):

@@ -332,8 +332,20 @@ _VERSION_RE = re.compile(r'"version"\s*:\s*"([^"]+)"')
 _MANIFEST = "plugins/harness/.claude-plugin/plugin.json"
 
 
+@pytest.mark.prepublish
 def test_changing_plugin_code_without_bumping_the_version_is_caught_here():
     """An unbumped version makes a published fix a silent no-op.
+
+    Marked `prepublish` and deselected by default. This is the one check here
+    that asserts a property of the working tree rather than of the code, and that
+    made it fatal to leave in the default suite: it fails on *any* modification
+    under `plugins/`, so every mutation in a sweep read as caught whether or not
+    a real test noticed. A sweep of 18 scored 18/18 against a suite that was
+    genuinely blind to several of them. This plugin's own agents mutation-test to
+    decide whether a test is worth keeping, so a tautology here corrupts the
+    method the whole review path rests on.
+
+    Run it with `python3 -m pytest -m prepublish` before publishing.
 
     `claude plugin marketplace update` refreshes marketplace metadata but does
     not re-fetch a plugin whose version string it has already seen. It finds the

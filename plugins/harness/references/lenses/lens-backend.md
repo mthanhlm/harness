@@ -12,10 +12,9 @@ database you cannot roll back. Most of what goes wrong here is one of those two
 promises being broken quietly — a response shape that shifted, a write that
 happened twice, a transaction that committed half of something.
 
-Three pages sit next to this one and are not restated here: `lens-security` for
+Two pages sit next to this one and are not restated here: `lens-security` for
 trust boundaries and injection, `lens-contracts` for versioning and breaking
-changes, `lens-resilience` for timeouts, retries and degradation. This page is
-the handler itself.
+changes. This page is the handler itself.
 
 ## Everything crossing the boundary is untrusted
 

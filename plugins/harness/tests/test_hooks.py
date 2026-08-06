@@ -122,6 +122,47 @@ def test_a_worker_is_denied_a_file_another_worker_already_wrote(data_dir, git_re
     assert "worker-a" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_a_reviewer_that_dirtied_a_file_does_not_deny_it_to_a_worker(
+    data_dir, git_repo, hook_env
+):
+    """A reviewer holds no slice, so it can hold no file against a worker.
+
+    Reviewers get `Bash`, and any command of theirs that dirties a tracked file —
+    a mutation sweep, a build emitting `dist/`, a formatter — lands in their own
+    shard through `bash_watch`. `files_touched` is append-only, so it stays for
+    the session. The next worker sent to that file was denied with "already been
+    written by reviewer-1, which owns a different slice of this plan"; it owns
+    none. The worker obeys, reports the file as one it could not take, and the
+    slice silently goes unbuilt while the lead reads a legitimate-looking
+    conflict.
+
+    The deny it inverts is the real one, so the pair below has to stay: this
+    asserts the reviewer is ignored, `test_a_worker_is_denied_a_file_another_worker_already_wrote`
+    asserts a genuine peer still is not.
+    """
+    run_hook(
+        "subagent_start.py",
+        {
+            "session_id": "sess",
+            "cwd": str(git_repo),
+            "hook_event_name": "SubagentStart",
+            "agent_id": "reviewer-1",
+            "agent_type": "harness:reviewer-correctness",
+        },
+        hook_env,
+        git_repo,
+    )
+    run_hook("post_edit_check.py", edit_payload(git_repo, "a.py", "reviewer-1"), hook_env, git_repo)
+
+    response = run_hook(
+        "pre_edit_gate.py", gate_payload(git_repo, "a.py", "worker-a"), hook_env, git_repo
+    )
+
+    assert response == {}, (
+        f"a reviewer's dirtied file was held against a worker that owns it: {response}"
+    )
+
+
 def test_a_worker_may_edit_its_own_file_while_another_worker_holds_a_different_one(
     data_dir, git_repo, hook_env
 ):

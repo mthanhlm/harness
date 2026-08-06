@@ -152,6 +152,42 @@ def test_a_reviewer_that_read_its_lens_is_let_through(data_dir, git_repo, hook_e
     )
 
 
+def test_lenses_injected_at_start_lets_the_gate_pass_with_no_lens_read(data_dir, git_repo, hook_env):
+    """The producer and the consumer of `lenses_injected`, run against each
+    other rather than each against a hand-written shard.
+
+    `subagent_start.py` writes `lenses_injected` to the shard; `lens_gate.verdict`
+    (called from here through `subagent_stop.py`) reads it back to decide whether
+    a review had domain knowledge in front of it. Every other test on this
+    mechanism writes the shard by hand or asserts on `context_for`'s return value
+    directly, so replacing the write with a `pop` would still pass the whole
+    suite — only running the real producer into the real consumer, through the
+    real shard file, catches that.
+
+    Another worker may be adding a second key to the same `shard_update` block in
+    `subagent_start.py` concurrently, so this does not assert the shard holds
+    *only* `lenses_injected` — only that the gate honours it.
+    """
+    (git_repo / "db").mkdir()
+    (git_repo / "db" / "schema.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    start_event = {
+        "session_id": "sess",
+        "cwd": str(git_repo),
+        "hook_event_name": "SubagentStart",
+        "agent_id": "reviewer-1",
+        "agent_type": "harness:reviewer-bloat",
+    }
+    run_hook("subagent_start.py", start_event, hook_env, git_repo)
+
+    stop_event = payload("reviewer-1", git_repo)
+    stop_event["agent_type"] = "harness:reviewer-bloat"
+
+    assert run_hook(SCRIPT, stop_event, hook_env, git_repo) == {}, (
+        "blocked a reviewer that had a lens injected at start and read none"
+    )
+
+
 def test_a_reviewer_that_read_no_lens_is_still_blocked(data_dir, git_repo, hook_env, tmp_path):
     """The other direction, so the test above cannot pass by the gate having been
     switched off — which is the cheaper way to make it green."""

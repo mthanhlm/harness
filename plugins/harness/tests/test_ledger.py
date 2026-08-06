@@ -45,6 +45,39 @@ def session_with_subagents(tmp_path: Path) -> Path:
     return main
 
 
+def test_cost_of_pins_the_multipliers_not_just_the_ordering(tmp_path):
+    """`CACHE_READ_MULTIPLIER` etc. are the headline spend figure's arithmetic.
+
+    Earlier tests here only assert cost is positive and ordered, so setting
+    `CACHE_READ_MULTIPLIER = 1.0` — a 10x error in the number the report leads
+    with — survives them silently. Pin the actual result for a known usage
+    block against a known rate, so a changed multiplier is a failing test
+    rather than a quietly wrong headline.
+    """
+    # Four distinct magnitudes, deliberately. With all four inputs equal the
+    # billable total is a plain sum of the multipliers, so it is unchanged by
+    # permuting which multiplier applies to which input — swapping the 5m and 1h
+    # rates, or reading each from the other's usage key, left the test green
+    # while a 1h cache write billed at the 5m rate under-reports that component
+    # by 37.5%. Distinct magnitudes make every such swap move the number.
+    usage = {
+        "input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+        "cache_read_input_tokens": 10_000_000,
+        "cache_creation": {
+            "ephemeral_5m_input_tokens": 4_000_000,
+            "ephemeral_1h_input_tokens": 2_000_000,
+        },
+    }
+
+    cost = ledger.cost_of("claude-opus-5", usage)
+
+    # claude-opus-5 is $5.00/M in, $25.00/M out. Billable input tokens are
+    # 1M plain + 10M * 0.1 (cache read) + 4M * 1.25 (5m write) + 2M * 2.0 (1h
+    # write) = 1 + 1 + 5 + 4 = 11M, so cost = 11 * 5.00 + 1 * 25.00 = 80.00.
+    assert cost == pytest.approx(80.00)
+
+
 def test_subagent_spend_is_counted(tmp_path):
     """Without this the report says delegation costs nothing at all."""
     main = session_with_subagents(tmp_path)
@@ -114,7 +147,7 @@ def test_a_rebuilt_entry_does_not_report_zero_checks_as_a_measurement():
 
     summary = ledger.summarize([rebuilt, measured])
 
-    assert "4 run, 1 caught" in summary
+    assert "4 run, 1 blocked" in summary
     assert "of 1 sessions" in summary, "the denominator must exclude unmeasured rows"
     assert "unknown for 1 session" in summary
 

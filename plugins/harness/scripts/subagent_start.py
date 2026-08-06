@@ -171,7 +171,12 @@ def main() -> int:
     # shard is the same file `session_state` accumulates into and a read-modify-
     # write without the lock is exactly how those updates get lost — the module
     # docstring on `_exclusive` counts 471 of 600 increments dropped.
+    # `agent` is what lets `_merge_shards` tell a reviewer's shard from a
+    # worker's — `writer_id` only gives the opaque `agent_id`, and an id says
+    # nothing about kind. Recorded here rather than derived later because this
+    # is the one hook that still has the bare name; nothing downstream does.
     with shard_update(event.get("session_id", "unknown"), writer_id(event)) as shard:
+        shard["agent"] = name
         shard["lenses_injected"] = loaded
 
     emit(

@@ -163,7 +163,7 @@ async def fetch_all(urls):
   `return_exceptions=True`. Decide which you want; the default surprises people.
 - **A task nobody holds a reference to can be collected mid-flight.** Keep the
   reference returned by `create_task`.
-- **Timeouts on everything external** — see `lens-resilience`.
+- **Timeouts on everything external.**
 
 **Tell**: `requests.` or `time.sleep(` inside `async def`; a `for` loop with
 `await` in the body where the iterations are independent.

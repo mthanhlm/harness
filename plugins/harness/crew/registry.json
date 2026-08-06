@@ -97,30 +97,6 @@
       ]
     },
     {
-      "name": "lens-retrieval",
-      "domain": "retrieval and memory",
-      "paths": [
-        "**/retrieval/**",
-        "**/retriever*/**",
-        "**/rag/**",
-        "**/*rag*.py",
-        "**/*rag*.ts",
-        "**/embeddings/**",
-        "**/*embedding*.py",
-        "**/*embedding*.ts",
-        "**/*retriev*.py",
-        "**/*retriev*.ts",
-        "**/*chunk*.py",
-        "**/*chunk*.ts",
-        "**/vectorstore*/**",
-        "**/*vector_store*",
-        "**/*vectorstore*",
-        "**/memory/**",
-        "**/*memory*.py",
-        "**/*memory*.ts"
-      ]
-    },
-    {
       "name": "lens-infra",
       "domain": "config, CI and shell",
       "paths": [
@@ -158,21 +134,6 @@
         "CHANGELOG.md",
         "**/drizzle/**",
         "**/alembic/**"
-      ]
-    },
-    {
-      "name": "lens-resilience",
-      "domain": "failure modes, resilience and operations",
-      "paths": [
-        "**/*retry*",
-        "**/*circuit*",
-        "**/queue*/**",
-        "**/*queue*.py",
-        "**/*queue*.ts",
-        "**/workers/**",
-        "**/jobs/**",
-        "**/*health*",
-        "**/*celery*"
       ]
     },
     {

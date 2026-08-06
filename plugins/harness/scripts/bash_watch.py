@@ -156,7 +156,20 @@ def _post(root: Path, session_id: str, writer: str) -> int:
     if not isinstance(before, dict):
         # Never sampled, so nothing can be attributed. Claiming the whole dirty
         # tree here is how the user's own uncommitted work gets reverted.
-        trace("Bash", session_id, "skipped: no pre-command sample", agent=writer[:8])
+        #
+        # Distinguished from a genuinely lost sample because it is not one:
+        # `_porcelain` (and therefore `snapshot`) returns None on every call for
+        # a directory that is not a git repository at all, so `_pre` never
+        # writes `bash_pre` there and this branch is permanent for the rest of
+        # the session — measured at 983 of 1,017 "skipped" traces across real
+        # logs, six of nine directories structurally blind to this detector
+        # 100% of the time. Logging both the same way reads as one sample that
+        # happened not to be taken, and it took breaking the count down per
+        # directory to see it was not.
+        if snapshot(root) is None:
+            trace("Bash", session_id, "skipped: not a git repository", agent=writer[:8])
+        else:
+            trace("Bash", session_id, "skipped: no pre-command sample", agent=writer[:8])
         return 0
 
     after = snapshot(root)

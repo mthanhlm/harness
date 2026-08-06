@@ -11,10 +11,15 @@ never sees, and the gate reports clean.
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-from state import load_session, save_session, session_state, shard_path, shards_dir
+from conftest import SCRIPTS
+from state import WRITE_CAPABLE_AGENTS, load_session, save_session, session_state, shard_path, shards_dir
 
 # Long enough that every child is guaranteed to have loaded before any saves.
 CHILD = """
@@ -300,3 +305,79 @@ def test_throwing_the_switch_under_test_cannot_reach_the_real_data_directory(dat
 
     assert state.off_marker() == data_dir / "off"
     assert state.off_marker().parent == state.data_dir()
+
+
+def run_switch(action: str, env: dict) -> subprocess.CompletedProcess:
+    """Drive `switch.py` as a subprocess, the way `conftest.run_hook` drives a
+    hook — except `switch.py` prints prose to stdout rather than JSON, so this
+    keeps its own thin wrapper instead of reusing `run_hook`."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "switch.py"), action],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_switch_status_on_off_each_do_their_distinct_thing(data_dir, hook_env):
+    """`switch.py`'s entire argv parse is unpinned — a mutation replacing it
+    with a constant survives the suite untouched, on the highest-consequence
+    script in the plugin.
+
+    Each action must produce a distinct, checkable effect: `status` reports
+    without changing anything, `off` writes the marker, `on` removes it.
+    """
+    import state
+
+    status = run_switch("status", hook_env)
+    assert status.returncode == 0
+    assert "ON" in status.stdout
+    assert not state.off_marker().exists(), "status must not have side effects"
+
+    off = run_switch("off", hook_env)
+    assert off.returncode == 0
+    assert "OFF" in off.stdout
+    assert state.off_marker().exists(), "off must write the marker status reported missing"
+
+    status_after_off = run_switch("status", hook_env)
+    assert "OFF" in status_after_off.stdout
+
+    on = run_switch("on", hook_env)
+    assert on.returncode == 0
+    assert "ON" in on.stdout
+    assert not state.off_marker().exists(), "on must remove the marker off wrote"
+
+
+def test_the_off_marker_switch_writes_is_the_one_gates_disabled_reads(data_dir, hook_env):
+    """The marker's location is the one fact that actually matters: a marker
+    `switch.py` writes somewhere `state.gates_disabled()` never looks is a kill
+    switch that reports success and disables nothing."""
+    import state
+
+    assert not state.gates_disabled(), "precondition: gates start on"
+
+    run_switch("off", hook_env)
+    assert state.gates_disabled(), "the marker switch.py wrote was not the one state.py reads"
+
+    run_switch("on", hook_env)
+    assert not state.gates_disabled(), "on must clear the exact marker off set"
+
+
+def test_write_capable_agents_are_pinned_against_the_agent_files(data_dir):
+    """`WRITE_CAPABLE_AGENTS` and the agents' own `tools:` frontmatter are two
+    declarations of the same fact. `test_wiring.test_write_capable_agents_are_named_here_on_purpose`
+    pins that the frontmatter says `{"worker"}`; nothing ties that to the
+    constant `_merge_shards` actually checks, so the two can drift apart with
+    the suite still green — this exact class of silent drift is what a reviewer
+    found elsewhere in this repo."""
+    plugin = Path(__file__).resolve().parent.parent
+    writers = set()
+    for path in sorted((plugin / "agents").glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        match = re.search(r"^tools:\s*(.*)$", text, re.MULTILINE)
+        tools = {t.strip() for t in (match.group(1) if match else "").split(",")}
+        if {"Write", "Edit"} & tools:
+            writers.add(path.stem)
+    assert writers == set(WRITE_CAPABLE_AGENTS), (
+        f"agents/*.md write-capable set {writers} has drifted from state.WRITE_CAPABLE_AGENTS"
+    )

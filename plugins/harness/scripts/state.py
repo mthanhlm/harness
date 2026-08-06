@@ -141,7 +141,7 @@ def trace(hook: str, session_id: str, outcome: str, **fields: Any) -> None:
         import time
 
         line = {
-            "at": time.strftime("%H:%M:%S"),
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "hook": hook,
             "session": (session_id or "?")[:8],
             "outcome": outcome,
@@ -277,6 +277,42 @@ DEFAULT_SESSION: dict[str, Any] = {
 }
 
 
+# Every hook fired inside a subagent still carries the *main* session's
+# `session_id`, so a reviewer that mutation-tests — edit a file, run the suite,
+# restore it — writes into the same session's shards as the turn it was asked
+# to review. `worker` is the only agent whose edits are the turn's own work;
+# every other named agent is an experiment against the tree, not a change to
+# it. Exactly one, because the parallel-edit safety the shard split exists for
+# was designed around a single write-capable agent — a second one is a
+# decision `test_write_capable_agents_are_named_here_on_purpose` has to change
+# its mind about too, not a silent addition here.
+WRITE_CAPABLE_AGENTS = frozenset({"worker"})
+
+
+def shard_is_accountable(shard: dict[str, Any]) -> bool:
+    """Whether this writer's `files_touched` are the turn's work to answer for.
+
+    Two consumers ask this and they must not drift: `_merge_shards`, which builds
+    the accountability view the scope fence accuses from, and
+    `pre_edit_gate._other_worker_holding`, which refuses a worker a file another
+    worker already wrote. The second had the rule in its docstring — "only other
+    *workers* count" — and no way to check it, so a reviewer that merely dirtied
+    a file through Bash denied the next worker its own slice, with a message
+    naming the reviewer as owning a different slice of the plan. It owns none.
+
+    Inclusion is the default, and deliberately. A shard with no `agent` is the
+    main thread, or an agent this plugin never labelled — `subagent_start` fires
+    only for `harness:`-prefixed agents, so `general-purpose` and `Explore` never
+    get one and both can genuinely write. Excluding on absence would turn an
+    unlabelled writer into a hole in the fence, and a fence that fails open reads
+    exactly like a clean turn.
+    """
+    agent = shard.get("agent")
+    if not isinstance(agent, str) or not agent.strip():
+        return True
+    return agent in WRITE_CAPABLE_AGENTS
+
+
 def writer_id(event: dict[str, Any]) -> str:
     """Which writer a hook payload came from.
 
@@ -366,6 +402,20 @@ def _merge_shards(session_id: str) -> dict[str, Any] | None:
     The None case matters during a plugin upgrade: a session that started under
     the single-file layout has counters in the session file and no shards, and
     returning zeros here would silently empty its scope fence.
+
+    `files_touched` alone is skipped for a shard whose `agent` names something
+    outside `WRITE_CAPABLE_AGENTS` — a reviewer's mutation-testing edit,
+    recorded by `subagent_start` under its own shard. The other accumulators
+    still merge in from it: `lines_changed`, `shell_changes` and the `checks`
+    counters are cost and activity measures, not an accusation, and a reviewer
+    genuinely spent tokens and ran checks.
+
+    The default has to be inclusion. A shard with no `agent` key is either the
+    main thread or an agent this plugin does not recognise — `subagent_start`
+    only fires for `harness:`-prefixed agents, so a `general-purpose` or
+    `Explore` agent never gets one, and those genuinely can write. Excluding by
+    default would turn an unrecognised writer into a silent hole in the scope
+    fence, and a fence that fails open reads exactly like a clean turn.
     """
     shards = sorted(shards_dir(session_id).glob("*.json"))
     if not shards:
@@ -377,7 +427,8 @@ def _merge_shards(session_id: str) -> dict[str, Any] | None:
         stored = read_json(shard, default=None)
         if not isinstance(stored, dict):
             continue
-        files.update(stored.get("files_touched") or [])
+        if shard_is_accountable(stored):
+            files.update(stored.get("files_touched") or [])
         merged["lines_changed"] += int(stored.get("lines_changed") or 0)
         merged["shell_changes"] += int(stored.get("shell_changes") or 0)
         checks = stored.get("checks")

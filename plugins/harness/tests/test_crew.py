@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from crew import lens_catalogue, registry, select_lenses
+from crew import AGENT_PREFIX, lens_catalogue, registry, select_lenses
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -159,6 +159,22 @@ def test_the_coherence_role_is_conditional_and_the_skill_names_it():
     assert len(when.split()) >= 4, f"the bullet states no condition to judge against: {when!r}"
 
 
+def test_agent_prefix_stays_in_sync_with_lens_gates_plugin_scope():
+    """`crew.AGENT_PREFIX` and `lens_gate.PLUGIN_SCOPE` spell the same fact —
+    the plugin name Claude Code scopes agent types with — in two files, and the
+    comment beside each says it is deliberately kept in sync with the other.
+
+    Nothing enforced that before this test: setting `AGENT_PREFIX = "wrong:"`
+    made `select_roles` emit `subagent_type` values nothing can spawn, and
+    `bare_name` would stop recognising this plugin's own agents as its own —
+    with every test in this file still green, because none of them compare the
+    two constants.
+    """
+    import lens_gate
+
+    assert AGENT_PREFIX == f"{lens_gate.PLUGIN_SCOPE}:"
+
+
 def test_the_report_no_longer_ships_the_lens_catalogue():
     """Each agent now loads its own domain knowledge from the paths it is given.
     Shipping the catalogue here made the lead pick lenses on behalf of agents
@@ -184,10 +200,10 @@ def test_a_directory_pattern_matches_that_directory_at_the_repo_root():
     """
     assert "lens-evaluation" in lenses("evals/cases/a.py")
     assert "lens-evaluation" in lenses("packages/api/evals/cases/a.py")
-    assert "lens-resilience" in lenses("jobs/nightly.py")
+    assert "lens-llm-agents" in lenses("skills/nightly.py")
 
 
 def test_a_directory_pattern_does_not_match_a_similarly_named_file():
-    """`**/jobs/**` is a directory, not a prefix. `jobsboard.ts` is not a job."""
-    assert "lens-resilience" not in lenses("src/jobsboard.ts")
+    """`**/skills/**` is a directory, not a prefix. `skillsboard.ts` is not one."""
+    assert "lens-llm-agents" not in lenses("src/skillsboard.ts")
     assert "lens-evaluation" not in lenses("src/evaluations.md")

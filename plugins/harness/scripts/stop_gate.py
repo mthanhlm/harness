@@ -274,8 +274,21 @@ def main() -> int:
 
     with session_state(session_id) as session:
         touched = session.get("files_touched") or []
-        if not touched:
-            trace("Stop", session_id, "skipped: no files touched this session")
+        lines_now = int(session.get("lines_changed") or 0)
+        shell_now = int(session.get("shell_changes") or 0)
+        # All three, not just the file list. `files_touched` names what a writer
+        # may be asked to justify; it is not a measure of whether the project
+        # moved. Two ways it reads empty over a dirty tree: `bash_watch` counts a
+        # command that reverted a file into `shell_changes` and appends nothing,
+        # and `_merge_shards` now drops the paths of any writer that is not
+        # write-capable — so a review turn whose lead edits nothing, while a
+        # reviewer mutation-tests through Bash, arrived here with an empty list.
+        # Returning on that alone skipped the *project checks*, not merely the
+        # scope fence: the turn ended green over a red suite, which is the one
+        # outcome this gate exists to prevent. Reproduced end to end against
+        # HEAD, where the same state blocks.
+        if not touched and not lines_now and not shell_now:
+            trace("Stop", session_id, "skipped: nothing changed this session")
             return 0
 
         # Re-running project checks when nothing changed since the last run just
@@ -300,8 +313,6 @@ def main() -> int:
         #
         # The triple still repeats exactly when nothing changed, which is what
         # keeps a conversational turn from paying for the suite.
-        lines_now = int(session.get("lines_changed") or 0)
-        shell_now = int(session.get("shell_changes") or 0)
         ran_at = [len(touched), lines_now, shell_now]
         # Once the gate has given up, re-running the suite buys nothing: it
         # cannot block again, so the whole run is thrown away. Measured at 5.8s
